@@ -10,7 +10,7 @@ import { IconClose } from './Icons';
 const HINTS: Record<ViewId, { lead: string; rest: string }> = {
   canvas: {
     lead: 'The board.',
-    rest: 'Days run across, hours run down. Lines are people: drag a face from the top onto a card to add them, drag a card’s dot onto another to send that group onward. A red line is a journey nobody could make in the time allowed.',
+    rest: 'Arrange cards however you like. A card in a day frame happens that day, and inside a frame top to bottom is the order of the day — side by side means at the same time. Drag a card’s dot onto another to say what follows what. Resolve turns the arrangement into a schedule.',
   },
   timeline: {
     lead: 'Everyone at once.',

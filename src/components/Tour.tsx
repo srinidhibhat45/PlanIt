@@ -65,8 +65,8 @@ function steps(trip: Trip): Step[] {
             they are coming from and when they can be there.
           </span></li>
           <li><span>
-            <b>Lay the plan out.</b> The <i>Canvas</i> is the board: days across, hours
-            down, people as lines between the cards.
+            <b>Sketch it on the board.</b> The <i>Canvas</i> is a whiteboard — arrange
+            cards by hand, then <i>Resolve</i> turns the arrangement into a schedule.
           </span></li>
           <li><span>
             <b>Fix what cannot happen.</b> PlanIt reads the plan back to you and flags
@@ -86,23 +86,25 @@ function steps(trip: Trip): Step[] {
     {
       view: 'canvas',
       eyebrow: 'Step 2 · Plan',
-      title: 'Canvas — the board everything hangs on',
+      title: 'Canvas — think here first',
       body: (
         <>
           <p>
-            Days run across, hours run down, so where a card sits <i>is</i> when it happens.
-            The lines between cards are people: one line carrying four faces means those
-            four go from this to that.
+            A whiteboard, not a calendar. Put cards anywhere, drag a card’s dot onto another
+            to say what follows what, and drop a note or a frame wherever it helps. Nothing
+            touches the clock until you ask it to.
           </p>
           <p>
-            Drag a face from the roster along the top onto a card to put that person on it.
-            Drag the dot on a card’s corner onto another card to send everyone on the first
-            card onward to the second. Select a few cards and press <i>Sub-trip</i> to peel
-            that group onto their own track while everyone else carries on.
+            Position earns its meaning from frames. A card inside a <b>day frame</b> happens
+            that day; inside a frame, top to bottom is the order of the day and side by side
+            means at the same time. A card inside a <b>sub-trip frame</b> belongs to that
+            group.
           </p>
           <p className="tour__note">
-            A red dashed line is a journey nobody could make in the time allowed — it says
-            how far, how long it really takes, and by how much you are short.
+            <b>Tidy</b> lays the existing plan out for you — a frame per day, in time order.
+            <b> Resolve</b> reads the board back and gives every framed or wired card a
+            time, journeys between places costed in. Pin a card to hold its time and let
+            everything else schedule around it.
           </p>
         </>
       ),

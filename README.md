@@ -124,7 +124,7 @@ opens on their days alone.
 
 | View | For |
 |---|---|
-| **Canvas** | The board. Days run across, hours run down, so where a card sits *is* when it happens. Lines between cards are people. |
+| **Canvas** | The board. A whiteboard you arrange by hand, which then resolves onto the calendar. |
 | **Timeline** | Swimlanes per person, group, place or type. The view for spotting who is where. Drag to move, drag edges to resize, drag across lanes to reassign. Stretches where someone is not on the trip yet are shaded and labelled with the date they arrive, so a blank lane is never ambiguous. |
 | **Day** | Hours down the side, a column per person. "Where do I need to be, and when?" |
 | **Trip** | The whole trip as a day grid. Coarse moves and empty-evening spotting. |
@@ -133,41 +133,70 @@ opens on their days alone.
 | **People** | Roster: arrivals, departures, hotel, interests, daily load. |
 | **Ideas** | Backlog of things people want to do, with interest voting. Drop one on a day and it finds a free evening slot. |
 
-### The canvas
+### The board
 
-The centrepiece, and the view that answers *"what does this trip actually look
-like?"*. It is a flow chart drawn on a calendar:
+The centrepiece, and where a trip gets thought out rather than typed in. It is a
+whiteboard — pan, zoom, put things anywhere — and it is deliberately *not* a
+calendar. Nothing on it touches the clock until you ask.
 
-- **Days across, hours down.** A card's position is its time. Dragging one is
-  rescheduling it, across days as readily as across hours, so there is no
-  separate layout to fall out of step with the plan.
-- **Edges are people, bundled.** Four travellers making the same hop is *one*
-  thick line carrying four faces, not four lines. That is the difference
-  between a diagram and a hairball.
-- **A red dashed line is a journey nobody could make.** The chip on it says how
-  far, how long the quickest route really takes, and by how much you are short.
-- **The roster runs along the top.** Who is present on each day, who arrives
-  that day, and how loaded they are. Drag a face onto a card to put that person
-  on it; hover one to light up their path and shade their free windows.
-- **Drag a card's corner dot onto another card** to send everyone on the first
-  card onward to the second — the gesture for "these three then go to the
-  workshop".
-- **Overlapping cards fan rather than divide.** Four concurrent red-eyes split
-  evenly would be 58 px each; staggered, every one stays wide enough to read its
-  flight number.
+Position earns its meaning from **frames**:
+
+- A card inside a **day frame** happens on that day. Inside a frame, top to
+  bottom is the order of the day, and side by side means at the same time — two
+  conference tracks are not a queue.
+- A card inside a **sub-trip frame** belongs to that group. Drop another one in
+  later and it joins.
+- A card anywhere else means nothing at all, which is the point of a board. It
+  is drawn with a dashed edge to say so.
+
+**Connectors** are the other half of the grammar. Drag a card's port onto
+another card and the second comes after the first; a *travel* connector (the
+default) costs the modelled journey between the two places, traffic and airport
+overheads included, while a *then* connector just means "after". Click the chip
+on a connector to switch between them.
+
+Two buttons bridge the board and the calendar, in both directions:
+
+- **Tidy** lays the existing plan out for you — a frame per day, cards in time
+  order, lanes for things that happen at once. This is the timeline → board
+  direction, and it is an explicit action rather than something that happens on
+  its own: a board that rearranges itself under your hands is not a board.
+- **Resolve** reads the arrangement back and hands out times. It is the board →
+  timeline direction, and it is built to be safe on a plan somebody has already
+  half-timed by hand:
+  - **A card opts in.** One that is neither framed, wired nor pinned is left
+    exactly where it is.
+  - **It only ever pushes forward.** A card on the wrong day changes date and
+    keeps its time of day. A card that cannot start that early is pushed later.
+    Nothing is ever pulled earlier, and no time is invented.
+  - **Reordering swaps, it does not reset.** Drag a card above another in the
+    same column and the times already in that column are dealt back out in the
+    new order — durations respected, so a one-hour lunch dropped below a
+    three-hour session lands after it, not on top of it.
+  - **Pins win.** A pinned card never moves, and if what runs into it says it
+    cannot happen that early, you get told rather than quietly overruled.
+
+  On a freshly tidied trip, Resolve reports no change — which is the property
+  worth having, and is asserted in the test suite.
+
+Also on the board: **sticky notes** for the things that are not plans yet, a
+**roster** pinned to the corner that you drag faces from onto cards, and a
+**people-flows** overlay — who actually goes from what to what, derived from
+attendance and the clock rather than from anything you drew, bundled so four
+travellers making the same hop is one line carrying four faces.
 
 ### Sub-trips
 
 Half the group goes to the beach while the rest stay for the second day of
-talks. Select those cards, press **Sub-trip**, choose who peels off: they move
-onto their own tinted track inside the same day column, which widens to make
-room. Everyone else carries on down the main line, and both are visible at once.
+talks. Select those cards, press **Sub-trip**, choose who peels off: a frame
+goes round them, and anything dropped into it from then on joins the sub-trip.
+Everyone else carries on, and both are on the same board.
 
-Sub-trips nest — a side trip can itself fork — and dissolving one puts its
-blocks back on the shared timeline rather than deleting them. The analyser
-checks them specifically: whether a member is still booked on the main timeline
-while supposedly away, and whether the group can physically get back for
-whatever everybody does next.
+Sub-trips nest — a side trip can itself fork — and dissolving one puts its cards
+back on the shared plan rather than deleting them. The analyser checks them
+specifically: whether a member is still booked on the main timeline while
+supposedly away, and whether the group can physically get back for whatever
+everybody does next.
 
 ### Places
 
@@ -284,7 +313,8 @@ src/
     travel.ts      distance, routing adapter, traffic model
     schedule.ts    derivations and the analyser
     layout.ts      lane packing and scale maths
-    canvas.ts      the node graph: columns, tracks, cards, bundled edges
+    board.ts       the board: viewport maths, containment, connectors, layout
+    resolve.ts     board → timeline: the pass that hands out times
     branch.ts      sub-trips — spans, nesting, split and rejoin points
     geo.ts         place search, map-link parsing, timezone from coordinates
     library.ts     the trip library, migration and duplication
@@ -294,7 +324,7 @@ src/
     share.ts       link encoding, JSON import/export
     clock.ts       which zone the UI renders in
   components/    views and chrome
-    CanvasView.tsx the board
+    CanvasView.tsx the board — tools, cards, frames, stickies, connectors
     TripsView.tsx  the library landing page
     PersonSheet.tsx  add or edit a traveller
     PlaceSearch.tsx  search, paste a map link, or type coordinates
@@ -303,7 +333,7 @@ src/
   Root.tsx       routing between the library and one open trip
   hooks/         drag machine, toasts, hotkeys, focus trap
   data/          the worked conference example
-test/run.ts      205 assertions, no framework
+test/run.ts      231 assertions, no framework
 ```
 
 **Invariants worth knowing**
@@ -314,10 +344,21 @@ test/run.ts      205 assertions, no framework
   is what the keyboard path uses.
 - Never transition the `background` shorthand — it strands elements on a stale
   colour when a theme token changes. Use `background-color`.
-- **A canvas card's position is its time, and nothing else.** There is no stored
-  layout: `buildCanvas` derives every rectangle from the segment's start, end
-  and branch. `timeAt` is the exact inverse of `yFor`, which is what lets a drag
-  be a reschedule rather than a drawing operation.
+- **The board stores positions; the calendar stores times; `resolve.ts` is the
+  only thing that turns one into the other.** Neither derives from the other
+  implicitly, which is what lets a card sit somewhere meaningless without
+  corrupting the plan.
+- **`toWorld` and `toScreen` are exact inverses, and `zoomAt` holds the point
+  under the cursor.** Both are asserted at an awkward zoom rather than at 1;
+  every drop position on the board depends on them.
+- **A frame's `dayKey` is always read in `trip.baseTimezone`,** never in the
+  segment's zone or the display clock. The board is one shared artefact and must
+  not re-bucket itself when somebody switches to another traveller's clock — an
+  overnight flight out of London is on the day the *trip* thinks it is. Getting
+  this wrong shifted every red-eye by a day.
+- **`turnaroundMin` defaults to zero.** Lunch ending as the afternoon session
+  begins is a normal thing for a plan to say; inventing ten minutes of slack
+  there rewrote thirty cards of a perfectly good schedule.
 - **Drag tracking is wired up synchronously from `pointerdown`,** not from an
   effect. An effect only runs after React commits, and a fast gesture can land
   its first move before that — which silently drops the drag.

@@ -14,7 +14,10 @@
  *  Everything is reversible; `unpack(pack(trip))` is asserted to be
  *  structurally identical to the original in the test suite. */
 
-import type { Branch, Group, ID, Idea, Person, Place, Segment, SegmentKind, SegmentStatus, Trip } from './types';
+import type {
+  Branch, Frame, Group, ID, Idea, Link, Person, Place, Segment, SegmentKind, SegmentStatus,
+  Sticky, Trip,
+} from './types';
 import { MIN } from './time';
 
 const KINDS: SegmentKind[] = [
@@ -56,6 +59,7 @@ export function pack(trip: Trip): Packed {
   const personKey = new Map<ID, number>(trip.people.map((p, i) => [p.id, i]));
   const groupKey = new Map<ID, number>(trip.groups.map((g, i) => [g.id, i]));
   const branchKey = new Map<ID, number>((trip.branches ?? []).map((b, i) => [b.id, i]));
+  const segKey = new Map<ID, number>(trip.segments.map((s, i) => [s.id, i]));
 
   // Intern the strings that repeat: a dozen segments in 'Asia/Kolkata' should
   // say so once, and 'conference' appears on every session.
@@ -131,6 +135,25 @@ export function pack(trip: Trip): Packed {
       cl: s.color,
       br: refOf(branchKey, s.branchId),
       ow: refOf(personKey, s.ownerId),
+      // Board position rounds to whole units: a card is 218 wide, so a tenth
+      // of a pixel is noise that costs four characters in every link.
+      bx: s.at ? Math.round(s.at.x) : undefined,
+      by: s.at ? Math.round(s.at.y) : undefined,
+      pn: s.pinned || undefined,
+    })),
+    G: (trip.links ?? []).map((l) => tidy({
+      f: segKey.get(l.fromId), t: segKey.get(l.toId),
+      k: l.kind === 'travel' ? 1 : undefined,
+      m: l.mode, b: l.bufferMin, l: l.label,
+    })),
+    H: (trip.stickies ?? []).map((n) => tidy({
+      t: n.text, x: Math.round(n.at.x), y: Math.round(n.at.y), c: n.color,
+      a: refOf(personKey, n.authorId),
+    })),
+    I: (trip.frames ?? []).map((f) => tidy({
+      t: f.title, x: Math.round(f.rect.x), y: Math.round(f.rect.y),
+      w: Math.round(f.rect.w), h: Math.round(f.rect.h), c: f.color,
+      d: f.dayKey, br: refOf(branchKey, f.branchId), cp: f.collapsed || undefined,
     })),
     E: trip.ideas.map((i) => tidy({
       t: i.title, k: KINDS.indexOf(i.kind), d: i.durationMin,
@@ -271,6 +294,38 @@ export function unpack(p: Packed): Trip {
     color: d.cl,
     branchId: d.br === undefined ? undefined : branchId(d.br),
     ownerId: d.ow === undefined ? undefined : personId(d.ow),
+    at: d.bx === undefined && d.by === undefined ? undefined : { x: d.bx ?? 0, y: d.by ?? 0 },
+    pinned: d.pn,
+  }));
+
+  const segmentId = (i: number) => ord('d', i);
+
+  const links: Link[] = (o.G ?? [])
+    .filter((g: any) => g.f !== undefined && g.t !== undefined)
+    .map((g: any, i: number) => ({
+      id: ord('g', i),
+      fromId: segmentId(g.f),
+      toId: segmentId(g.t),
+      kind: g.k === 1 ? ('travel' as const) : ('then' as const),
+      mode: g.m, bufferMin: g.b, label: g.l,
+    }));
+
+  const stickies: Sticky[] = (o.H ?? []).map((n: any, i: number) => ({
+    id: ord('h', i),
+    text: n.t ?? '',
+    at: { x: n.x ?? 0, y: n.y ?? 0 },
+    color: n.c ?? '#ffb020',
+    authorId: n.a === undefined ? undefined : personId(n.a),
+  }));
+
+  const frames: Frame[] = (o.I ?? []).map((f: any, i: number) => ({
+    id: ord('i', i),
+    title: f.t ?? 'Frame',
+    rect: { x: f.x ?? 0, y: f.y ?? 0, w: f.w ?? 400, h: f.h ?? 300 },
+    color: f.c ?? 'var(--line-3)',
+    dayKey: f.d,
+    branchId: f.br === undefined ? undefined : branchId(f.br),
+    collapsed: f.cp,
   }));
 
   const ideas: Idea[] = (o.E ?? []).map((e: any, i: number) => ({
@@ -293,7 +348,7 @@ export function unpack(p: Packed): Trip {
     endDate: o.ed ?? '1970-01-01',
     baseTimezone: o.tz ?? 'UTC',
     currency: o.cu ?? 'USD',
-    places, people, groups, segments, branches, ideas,
+    places, people, groups, segments, branches, links, stickies, frames, ideas,
     updatedAt: o.ua ?? Date.now(),
     schemaVersion: 1,
   };

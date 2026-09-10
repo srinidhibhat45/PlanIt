@@ -1,7 +1,7 @@
 /** Trip state: a reducer with linear undo/redo, debounced persistence and a
  *  tiny pub/sub so any component can subscribe without a state library. */
 
-import type { Branch, ID, Idea, Group, Person, Place, Segment, Trip } from './types';
+import type { Branch, Frame, ID, Idea, Group, Link, Person, Place, Point, Segment, Sticky, Trip } from './types';
 import { MIN, snap } from './time';
 
 export type Action =
@@ -36,6 +36,21 @@ export type Action =
   | { type: 'branch/set-members'; id: ID; memberIds: ID[]; syncSegments: boolean }
   | { type: 'segment/set-branch'; ids: ID[]; branchId?: ID }
   | { type: 'segments/add'; segments: Segment[]; places?: Place[]; label?: string }
+  /* ---- the board ---- */
+  | { type: 'board/nudge'; ids: ID[]; dx: number; dy: number }
+  | { type: 'board/place'; positions: [ID, Point][]; label?: string }
+  | { type: 'board/layout'; positions: [ID, Point][]; frames: Frame[] }
+  | { type: 'board/apply-times'; times: { id: ID; start: number }[] }
+  | { type: 'segment/pin'; ids: ID[]; pinned: boolean }
+  | { type: 'link/add'; link: Link }
+  | { type: 'link/patch'; id: ID; patch: Partial<Link> }
+  | { type: 'link/delete'; ids: ID[] }
+  | { type: 'sticky/add'; sticky: Sticky }
+  | { type: 'sticky/patch'; id: ID; patch: Partial<Sticky> }
+  | { type: 'sticky/delete'; id: ID }
+  | { type: 'frame/add'; frame: Frame }
+  | { type: 'frame/patch'; id: ID; patch: Partial<Frame> }
+  | { type: 'frame/delete'; id: ID }
   | { type: 'history/undo' }
   | { type: 'history/redo' };
 
@@ -110,6 +125,20 @@ function labelFor(a: Action, before: Trip): string {
     case 'segment/set-branch':
       return a.branchId ? 'Moved into a sub-trip' : 'Moved back to the main timeline';
     case 'segments/add': return a.label ?? `Added ${a.segments.length} blocks`;
+    case 'board/nudge': return a.ids.length === 1 ? `Moved “${seg(a.ids[0])}”` : `Moved ${a.ids.length} cards`;
+    case 'board/place': return a.label ?? 'Moved cards on the board';
+    case 'board/layout': return 'Tidied the board';
+    case 'board/apply-times': return `Scheduled ${a.times.length} ${a.times.length === 1 ? 'card' : 'cards'}`;
+    case 'segment/pin': return a.pinned ? 'Pinned the time' : 'Unpinned the time';
+    case 'link/add': return 'Connected two cards';
+    case 'link/delete': return a.ids.length === 1 ? 'Removed a connector' : `Removed ${a.ids.length} connectors`;
+    case 'link/patch': return 'Edited a connector';
+    case 'sticky/add': return 'Added a note';
+    case 'sticky/patch': return 'Edited a note';
+    case 'sticky/delete': return 'Deleted a note';
+    case 'frame/add': return `Added the frame “${a.frame.title}”`;
+    case 'frame/patch': return 'Edited a frame';
+    case 'frame/delete': return 'Removed a frame';
     case 'trip/replace': return a.label ?? 'Loaded a trip';
     default: return ('label' in a && a.label) || 'Change';
   }
@@ -152,12 +181,19 @@ function applyToTrip(trip: Trip, a: Action): Trip {
       });
 
     case 'segment/delete':
-      return { ...trip, segments: trip.segments.filter((s) => s.id !== a.id) };
+      return {
+        ...trip,
+        segments: trip.segments.filter((s) => s.id !== a.id),
+        links: trip.links.filter((l) => l.fromId !== a.id && l.toId !== a.id),
+      };
 
     case 'segment/duplicate': {
       const src = trip.segments.find((s) => s.id === a.id);
       if (!src) return trip;
-      const copy: Segment = { ...src, id: uid('seg'), title: `${src.title} (copy)` };
+      const copy: Segment = {
+        ...src, id: uid('seg'), title: `${src.title} (copy)`,
+        at: src.at ? { x: src.at.x + 28, y: src.at.y + 28 } : undefined,
+      };
       return { ...trip, segments: [...trip.segments, copy] };
     }
 
@@ -245,12 +281,15 @@ function applyToTrip(trip: Trip, a: Action): Trip {
       const branches = trip.branches
         .filter((b) => b.id !== a.id)
         .map((b) => (b.parentId === a.id ? { ...b, parentId: doomed.parentId } : b));
+      const dropped = a.keep ? [] : trip.segments.filter((s) => s.branchId === a.id).map((s) => s.id);
       return {
         ...trip,
         branches,
+        frames: trip.frames.filter((f) => f.branchId !== a.id),
         segments: a.keep
           ? trip.segments.map((s) => (s.branchId === a.id ? { ...s, branchId: doomed.parentId } : s))
           : trip.segments.filter((s) => s.branchId !== a.id),
+        links: trip.links.filter((l) => !dropped.includes(l.fromId) && !dropped.includes(l.toId)),
       };
     }
 
@@ -279,6 +318,85 @@ function applyToTrip(trip: Trip, a: Action): Trip {
         places: a.places?.length ? [...trip.places, ...a.places] : trip.places,
         segments: [...trip.segments, ...a.segments],
       };
+
+    case 'board/nudge': {
+      const ids = new Set(a.ids);
+      return {
+        ...trip,
+        segments: trip.segments.map((s) =>
+          ids.has(s.id) ? { ...s, at: { x: (s.at?.x ?? 0) + a.dx, y: (s.at?.y ?? 0) + a.dy } } : s),
+      };
+    }
+
+    case 'board/place': {
+      const next = new Map(a.positions);
+      return {
+        ...trip,
+        segments: trip.segments.map((s) => (next.has(s.id) ? { ...s, at: next.get(s.id)! } : s)),
+      };
+    }
+
+    case 'board/layout': {
+      const next = new Map(a.positions);
+      // Frames are matched by id so a tidy keeps whatever the planner renamed
+      // or recoloured, rather than replacing their work with defaults.
+      const kept = trip.frames.filter((f) => !a.frames.some((n) => n.id === f.id));
+      return {
+        ...trip,
+        segments: trip.segments.map((s) => (next.has(s.id) ? { ...s, at: next.get(s.id)! } : s)),
+        frames: [...kept, ...a.frames],
+      };
+    }
+
+    case 'board/apply-times': {
+      const next = new Map(a.times.map((t) => [t.id, t.start]));
+      return {
+        ...trip,
+        segments: trip.segments.map((s) => {
+          const start = next.get(s.id);
+          return start === undefined ? s : { ...s, start, end: start + (s.end - s.start) };
+        }),
+      };
+    }
+
+    case 'segment/pin': {
+      const ids = new Set(a.ids);
+      return {
+        ...trip,
+        segments: trip.segments.map((s) => (ids.has(s.id) ? { ...s, pinned: a.pinned || undefined } : s)),
+      };
+    }
+
+    case 'link/add': {
+      // One connector per ordered pair, and never one that simply reverses an
+      // existing edge — that is a cycle of length two, and always a mistake.
+      const exists = trip.links.some(
+        (l) => (l.fromId === a.link.fromId && l.toId === a.link.toId) ||
+          (l.fromId === a.link.toId && l.toId === a.link.fromId),
+      );
+      if (exists || a.link.fromId === a.link.toId) return trip;
+      return { ...trip, links: [...trip.links, a.link] };
+    }
+
+    case 'link/patch':
+      return { ...trip, links: trip.links.map((l) => (l.id === a.id ? { ...l, ...a.patch } : l)) };
+
+    case 'link/delete': {
+      const ids = new Set(a.ids);
+      return { ...trip, links: trip.links.filter((l) => !ids.has(l.id)) };
+    }
+
+    case 'sticky/add': return { ...trip, stickies: [...trip.stickies, a.sticky] };
+    case 'sticky/patch':
+      return { ...trip, stickies: trip.stickies.map((n) => (n.id === a.id ? { ...n, ...a.patch } : n)) };
+    case 'sticky/delete':
+      return { ...trip, stickies: trip.stickies.filter((n) => n.id !== a.id) };
+
+    case 'frame/add': return { ...trip, frames: [...trip.frames, a.frame] };
+    case 'frame/patch':
+      return { ...trip, frames: trip.frames.map((f) => (f.id === a.id ? { ...f, ...a.patch } : f)) };
+    case 'frame/delete':
+      return { ...trip, frames: trip.frames.filter((f) => f.id !== a.id) };
 
     case 'idea/promote': {
       const idea = trip.ideas.find((i) => i.id === a.id);

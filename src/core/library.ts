@@ -133,6 +133,8 @@ export function reidentify(trip: Trip): Trip {
   const groups = trip.groups.map((g) => ({ ...g, id: swap(g.id, 'grp')! }));
 
   const re = (ids: ID[]) => ids.map((i) => map.get(i) ?? i);
+  // Segments need their mapping up front, because links point at them.
+  const segMap = new Map<ID, ID>(trip.segments.map((s) => [s.id, uid('seg')]));
   return {
     ...trip,
     id: uid('trip'),
@@ -142,7 +144,7 @@ export function reidentify(trip: Trip): Trip {
     branches: branches.map((b) => ({ ...b, memberIds: re(b.memberIds), parentId: b.parentId && map.get(b.parentId) })),
     segments: trip.segments.map((s) => ({
       ...s,
-      id: uid('seg'),
+      id: segMap.get(s.id)!,
       attendeeIds: re(s.attendeeIds),
       groupIds: re(s.groupIds),
       placeId: s.placeId && map.get(s.placeId),
@@ -154,6 +156,15 @@ export function reidentify(trip: Trip): Trip {
     ideas: trip.ideas.map((i) => ({
       ...i, id: uid('idea'), attendeeIds: re(i.attendeeIds), votes: re(i.votes),
       placeId: i.placeId && map.get(i.placeId),
+    })),
+    links: (trip.links ?? []).map((l) => ({
+      ...l, id: uid('lnk'), fromId: segMap.get(l.fromId) ?? l.fromId, toId: segMap.get(l.toId) ?? l.toId,
+    })),
+    stickies: (trip.stickies ?? []).map((n) => ({
+      ...n, id: uid('sty'), authorId: n.authorId && map.get(n.authorId),
+    })),
+    frames: (trip.frames ?? []).map((f) => ({
+      ...f, id: uid('frm'), branchId: f.branchId && map.get(f.branchId),
     })),
     updatedAt: Date.now(),
     createdAt: Date.now(),
@@ -175,6 +186,9 @@ export function migrate(trip: Trip): Trip {
     people: (trip.people ?? []).map((p) => ({ ...p, homeTimezone: z(p.homeTimezone) })),
     groups: trip.groups ?? [],
     segments: (trip.segments ?? []).map((s) => ({ ...s, timezone: z(s.timezone) })),
+    links: trip.links ?? [],
+    stickies: trip.stickies ?? [],
+    frames: trip.frames ?? [],
     ideas: trip.ideas ?? [],
     createdAt: trip.createdAt ?? trip.updatedAt ?? Date.now(),
     schemaVersion: 1,
@@ -199,7 +213,8 @@ export function blankTrip(input: NewTripInput): Trip {
     endDate: input.endDate,
     baseTimezone: input.baseTimezone,
     currency: input.currency ?? 'INR',
-    places: [], people: [], groups: [], segments: [], branches: [], ideas: [],
+    places: [], people: [], groups: [], segments: [], branches: [],
+    links: [], stickies: [], frames: [], ideas: [],
     createdAt: Date.now(),
     updatedAt: Date.now(),
     schemaVersion: 1,

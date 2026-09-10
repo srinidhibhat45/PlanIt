@@ -4,6 +4,11 @@
  *  Nothing in the app ever stores a naive local time. */
 
 export type ID = string;
+
+/** Board coordinates. The board is unbounded, so these are signed and have no
+ *  units beyond "one unit is one pixel at 100% zoom". */
+export interface Point { x: number; y: number }
+export interface Rect { x: number; y: number; w: number; h: number }
 export type Epoch = number;          // UTC milliseconds
 export type IsoDate = string;        // 'YYYY-MM-DD'
 export type Zone = string;           // IANA, e.g. 'Asia/Kolkata'
@@ -89,6 +94,11 @@ export interface Segment {
   color?: string;
   /** Sub-trip this belongs to. Undefined = the main timeline everyone shares. */
   branchId?: ID;
+  /** Where the card sits on the board. Absent until the board first lays it out. */
+  at?: Point;
+  /** A pinned card keeps the time it has; the resolver schedules around it.
+   *  Everything else takes its time from the links running into it. */
+  pinned?: boolean;
   /** The person whose personal itinerary this came from. Undefined = trip-level,
    *  authored by whoever is planning. Used to decide who may edit it. */
   ownerId?: ID;
@@ -131,6 +141,51 @@ export interface Group {
   /** For hotel groups, the place they are staying at. */
   placeId?: ID;
   description?: string;
+}
+
+/** A connector the planner drew between two cards.
+ *
+ *  This is the spine of the board: it says *B happens after A*, and it is what
+ *  lets a pile of cards arranged by hand resolve into a schedule. The travel
+ *  kind additionally says "and getting there takes a journey", which the
+ *  resolver costs using the same model the analyser uses. */
+export interface Link {
+  id: ID;
+  fromId: ID;
+  toId: ID;
+  kind: 'then' | 'travel';
+  /** For a travel link, how they are getting there. */
+  mode?: TravelMode;
+  /** Extra slack the planner wants on top of the modelled journey, in minutes. */
+  bufferMin?: number;
+  label?: string;
+}
+
+/** A loose note on the board. Not scheduled, not on anyone's itinerary — the
+ *  equivalent of a sticky on a whiteboard, and just as disposable. */
+export interface Sticky {
+  id: ID;
+  text: string;
+  at: Point;
+  color: string;
+  /** Who wrote it, when the board is being used by more than one person. */
+  authorId?: ID;
+}
+
+/** A region of the board that means something.
+ *
+ *  Containment is the interface: drop a card inside a frame and it takes on
+ *  what the frame says. A frame with a `dayKey` puts everything in it on that
+ *  day; one with a `branchId` puts everything in it on that sub-trip. A frame
+ *  with neither is just a labelled area, which is often all you want. */
+export interface Frame {
+  id: ID;
+  title: string;
+  rect: Rect;
+  color: string;
+  dayKey?: IsoDate;
+  branchId?: ID;
+  collapsed?: boolean;
 }
 
 /** A sub-trip: a slice of the plan a subset of people do on their own, which
@@ -176,6 +231,9 @@ export interface Trip {
   groups: Group[];
   segments: Segment[];
   branches: Branch[];
+  links: Link[];
+  stickies: Sticky[];
+  frames: Frame[];
   ideas: Idea[];
   createdAt?: Epoch;
   updatedAt: Epoch;
@@ -222,5 +280,5 @@ export interface Issue {
     | 'before-arrival' | 'after-departure' | 'no-attendees'
     | 'unreachable' | 'tight-connection' | 'no-meal' | 'late-night'
     | 'outside-window' | 'branch-clash' | 'branch-rejoin' | 'branch-orphan'
-    | 'needs-flight';
+    | 'needs-flight' | 'link-cycle' | 'link-backwards';
 }

@@ -1,6 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type {
-  ClockMode, Density, Filters, ID, LaneMode, Person, Segment, ThemeMode, Trip, ViewId,
+  ClockMode, Density, Filters, Frame, ID, LaneMode, Link, Person, Rect, Segment,
+  Sticky, ThemeMode, Trip, ViewId,
 } from './core/types';
 import { DAY, MIN, addDays, dateKey, dateKeyToEpoch, eachDay, fmtDate } from './core/time';
 import { analyse, applyFilters, attendeesOf, issueSummary } from './core/schedule';
@@ -12,6 +13,8 @@ import { initialState, loadPrefs, reducer, savePrefs, uid } from './core/store';
 import { writeTrip } from './core/library';
 import { makeBranch } from './core/library';
 import { nextBranchColor } from './core/branch';
+import { layoutFromSchedule } from './core/board';
+import { describeResolution, resolveBoard } from './core/resolve';
 import { conferenceTrip } from './data/conference';
 import { useAnnouncer, useHotkeys, useIsMobile, useNow, usePersistedState, useToasts } from './hooks/useUi';
 
@@ -26,7 +29,7 @@ import { AgendaView, agendaText } from './components/AgendaView';
 const MapView = lazy(() => import('./components/MapView').then((m) => ({ default: m.MapView })));
 import { PeopleView } from './components/PeopleView';
 import { PersonSheet } from './components/PersonSheet';
-import { CanvasView, type CanvasHandlers } from './components/CanvasView';
+import { CanvasView, type BoardHandlers } from './components/CanvasView';
 import { BoardView } from './components/BoardView';
 import { CommandPalette, type Command } from './components/CommandPalette';
 import { ShareDialog } from './components/ShareDialog';
@@ -166,7 +169,10 @@ export default function App({
   }, [trip, readOnly, tripId, onSaved]);
 
   /* ---------- derived ---------- */
-  const issues = useMemo(() => analyse(trip), [trip]);
+  /* The board can be wrong in ways the calendar cannot — a loop of connectors,
+     or a pin that contradicts what runs into it — so the resolver's findings
+     join the analyser's in the same list. */
+  const issues = useMemo(() => [...analyse(trip), ...resolveBoard(trip).issues], [trip]);
   const filtered = useMemo(() => {
     const base = applyFilters(trip, filters);
     return focusPersonId ? base.filter((s) => attendeesOf(s, trip).includes(focusPersonId)) : base;
@@ -262,38 +268,27 @@ export default function App({
 
   /* ---------- canvas ---------- */
 
-  const canvasHandlers = useMemo<CanvasHandlers>(() => ({
+  const boardHandlers = useMemo<BoardHandlers>(() => ({
     onSelect: (id) => setSelectedId(id),
 
-    onMove: (id, start, branchId) => guard(() => {
-      const seg = trip.segments.find((s) => s.id === id);
-      if (!seg) return;
-      if (seg.locked) {
-        push(`“${seg.title}” is locked. Unlock it in the details panel to move it.`);
-        return;
-      }
-      dispatch({ type: 'segment/set-time', id, start, end: start + (seg.end - seg.start) });
-      if ((seg.branchId ?? undefined) !== branchId) {
-        dispatch({ type: 'segment/set-branch', ids: [id], branchId });
-      }
-    }),
+    onMoveCards: (ids, dx, dy) => guard(() => dispatch({ type: 'board/nudge', ids, dx, dy })),
 
-    onCreate: (draft, place) => guard(() => {
-      // A place dragged in may be brand new, in which case it has to land in
-      // the trip in the same change as the block that points at it.
+    onCreateCard: (at, draft, place) => guard(() => {
+      const start = draft?.start ?? dateKeyToEpoch(dayKey || trip.startDate, zone) + 10 * 60 * MIN;
       const seg: Segment = {
         id: uid('seg'),
-        title: draft.title ?? 'New block',
-        kind: draft.kind ?? 'activity',
-        start: draft.start,
-        end: draft.end,
+        title: draft?.title ?? 'New card',
+        kind: draft?.kind ?? 'activity',
+        start,
+        end: draft?.end ?? start + (place?.dwellMin ?? 90) * MIN,
         timezone: place?.timezone ?? trip.baseTimezone,
-        placeId: draft.placeId ?? place?.id,
+        placeId: draft?.placeId ?? place?.id,
         attendeeIds: focusPersonId ? [focusPersonId] : [],
         groupIds: [],
-        branchId: draft.branchId,
         status: 'tentative',
         tags: [],
+        at,
+        ...draft,
       };
       const isNewPlace = !!place && !trip.places.some((p) => p.id === place.id);
       dispatch({
@@ -305,37 +300,47 @@ export default function App({
       setSelectedId(seg.id);
     }),
 
-    onConnect: (fromId, toId) => guard(() => {
-      const from = trip.segments.find((s) => s.id === fromId);
-      const to = trip.segments.find((s) => s.id === toId);
-      if (!from || !to) return;
-      const incoming = attendeesOf(from, trip);
-      const already = new Set(attendeesOf(to, trip));
-      const added = incoming.filter((p) => !already.has(p));
-      if (!added.length) {
-        push(`Everyone on “${from.title}” is already on “${to.title}”.`);
-        return;
-      }
-      for (const personId of added) dispatch({ type: 'segment/assign', id: toId, personId, on: true });
-      push(
-        `${added.length} ${added.length === 1 ? 'person' : 'people'} carried over to “${to.title}”.`,
-        { tone: 'ok', action: { label: 'Undo', run: () => added.forEach(() => dispatch({ type: 'history/undo' })) } },
-      );
+    onDeleteCards: (ids) => guard(() => {
+      if (!ids.length) return;
+      for (const id of ids) dispatch({ type: 'segment/delete', id });
+      setSelectedId(null);
+      push(`Deleted ${ids.length} ${ids.length === 1 ? 'card' : 'cards'}.`, {
+        action: { label: 'Undo', run: () => ids.forEach(() => dispatch({ type: 'history/undo' })) },
+      });
     }),
+
+    onPin: (ids, pinned) => guard(() => dispatch({ type: 'segment/pin', ids, pinned })),
 
     onAssign: (segmentId, personId, on) =>
       guard(() => dispatch({ type: 'segment/assign', id: segmentId, personId, on })),
 
-    onCreateBranch: (name, memberIds, segmentIds) => guard(() => {
+    onLink: (fromId, toId, kind) => guard(() => {
+      const link: Link = { id: uid('lnk'), fromId, toId, kind };
+      dispatch({ type: 'link/add', link });
+    }),
+
+    onPatchLink: (id, patch) => guard(() => dispatch({ type: 'link/patch', id, patch })),
+    onUnlink: (ids) => guard(() => dispatch({ type: 'link/delete', ids })),
+
+    onAddSticky: (sticky: Sticky) => guard(() => dispatch({ type: 'sticky/add', sticky })),
+    onPatchSticky: (id, patch) => guard(() => dispatch({ type: 'sticky/patch', id, patch })),
+    onDeleteSticky: (id) => guard(() => dispatch({ type: 'sticky/delete', id })),
+
+    onAddFrame: (frame: Frame) => guard(() => dispatch({ type: 'frame/add', frame })),
+    onPatchFrame: (id, patch) => guard(() => dispatch({ type: 'frame/patch', id, patch })),
+    onDeleteFrame: (id) => guard(() => dispatch({ type: 'frame/delete', id })),
+
+    onCreateBranch: (name, memberIds, segmentIds, rect: Rect) => guard(() => {
       const branch = makeBranch(name, memberIds, nextBranchColor(trip));
       dispatch({ type: 'branch/add', branch, segmentIds });
       dispatch({ type: 'branch/set-members', id: branch.id, memberIds, syncSegments: true });
+      // The frame is the sub-trip's presence on the board: drop a card in later
+      // and it joins, which is the whole point of doing this spatially.
+      dispatch({
+        type: 'frame/add',
+        frame: { id: uid('frm'), title: branch.name, rect, color: branch.color, branchId: branch.id },
+      });
       push(`“${branch.name}” split off with ${memberIds.length} ${memberIds.length === 1 ? 'person' : 'people'}.`, { tone: 'ok' });
-    }),
-
-    onSetBranch: (ids, branchId) => guard(() => {
-      if (!ids.length) return;
-      dispatch({ type: 'segment/set-branch', ids, branchId });
     }),
 
     onDeleteBranch: (id, keep) => guard(() => {
@@ -343,14 +348,36 @@ export default function App({
       dispatch({ type: 'branch/delete', id, keep });
       push(
         keep
-          ? `“${branch?.name ?? 'Sub-trip'}” dissolved — its blocks are back on the main timeline.`
+          ? `“${branch?.name ?? 'Sub-trip'}” dissolved — its cards stay on the board.`
           : `“${branch?.name ?? 'Sub-trip'}” deleted.`,
         { action: { label: 'Undo', run: () => dispatch({ type: 'history/undo' }) } },
       );
     }),
 
+    onTidy: () => guard(() => {
+      const { positions, frames } = layoutFromSchedule(trip, trip.baseTimezone);
+      if (!positions.size) { push('There is nothing scheduled to lay out yet.'); return; }
+      dispatch({ type: 'board/layout', positions: [...positions], frames });
+      push(`Laid out ${positions.size} cards across ${frames.length} days.`, {
+        tone: 'ok', action: { label: 'Undo', run: () => dispatch({ type: 'history/undo' }) },
+      });
+    }),
+
+    onResolve: () => guard(() => {
+      const result = resolveBoard(trip);
+      if (!result.moves.length) {
+        push(describeResolution(result, trip, zone));
+        return;
+      }
+      dispatch({ type: 'board/apply-times', times: result.moves.map((m) => ({ id: m.id, start: m.to })) });
+      push(describeResolution(result, trip, zone), {
+        tone: 'ok', action: { label: 'Undo', run: () => dispatch({ type: 'history/undo' }) },
+      });
+      announce(`Scheduled ${result.moves.length} cards from the board.`);
+    }),
+
     onAnnounce: announce,
-  }), [guard, trip, focusPersonId, push, announce]);
+  }), [guard, trip, focusPersonId, dayKey, zone, push, announce]);
 
   const makeEditable = useCallback(() => {
     setReadOnly(false);
@@ -595,7 +622,7 @@ export default function App({
             {prefs.view === 'canvas' && (
               <CanvasView
                 trip={trip} segments={filtered} clock={clock} issues={issues}
-                selectedId={selectedId} now={now} handlers={canvasHandlers}
+                selectedId={selectedId} now={now} handlers={boardHandlers}
               />
             )}
             {prefs.view === 'timeline' && (

@@ -1,59 +1,77 @@
-/** The planning canvas: a flow chart drawn on a calendar.
+/** The board.
  *
- *  Days run across, hours run down, and every card sits at its own time — so
- *  the picture is the plan, not a drawing of it. Lines between cards are
- *  *people*, bundled: four travellers making the same hop is one thick line
- *  carrying four faces, which is the difference between a diagram and a
- *  hairball. A line that cannot be walked, driven or flown in the time allowed
- *  turns red and says by how much.
+ *  An unbounded whiteboard, not a calendar. Cards sit wherever you put them,
+ *  connectors say what follows what, frames say what belongs together — and
+ *  none of it touches the clock until you ask it to. **Resolve** is the bridge:
+ *  it reads the arrangement and hands back a schedule, which the timeline, day
+ *  and map views then render as usual.
  *
- *  Three gestures do almost everything:
- *    · drag a card            → reschedule it, across days as well as hours
- *    · drag card → card       → send that card's people on to the next one
- *    · drag a face → card     → put that person on it
+ *  What a position means:
+ *    · inside a day frame  → that card happens on that day, and top-to-bottom
+ *      inside the frame is the order of the day
+ *    · inside a sub-trip frame → that card belongs to that sub-trip
+ *    · anywhere else       → nothing at all, which is the point of a board
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ClockMode, ID, Issue, Place, Segment, Trip } from '../core/types';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
+import type {
+  ClockMode, Frame, ID, Issue, Link, Place, Point, Rect, Segment, Sticky, Trip,
+} from '../core/types';
 import {
-  DEFAULT_CANVAS, buildCanvas, canvasHeight, fitHours, hitColumn, hourLines,
-  nightSpans, timeAt, yFor, type CanvasEdge, type CanvasModel, type CanvasNode, type CanvasOptions,
-} from '../core/canvas';
-import { HOUR, MIN, dateKey, dateKeyToEpoch, eachDay, fmtDate, fmtDuration, fmtTime, snap } from '../core/time';
+  CARD_H, CARD_W, STICKY_H, STICKY_W, cardRect, cardsIn, connector, contentBounds,
+  fitTo, frameAt, isScheduled, normalise, nextFreeSpot, peopleFlows,
+  stickyRect, toWorld, zoomAt, type Viewport,
+} from '../core/board';
+import { contains } from '../core/resolve';
+import { MIN, fmtDate, fmtDuration, fmtTime } from '../core/time';
 import { attendeesOf } from '../core/schedule';
 import { axisZone } from '../core/clock';
-import { branchMembers, branchStats } from '../core/branch';
+import { branchMembers } from '../core/branch';
 import { KIND_LABEL } from '../core/layout';
 import { PlaceSearch } from './PlaceSearch';
 import { initials } from './SegmentChrome';
 import {
-  IconBoard, IconClose, IconGrab, IconLink, IconPlus, IconSearch, IconSparkle,
-  IconWarn, IconZoomIn, IconZoomOut,
+  IconBoard, IconClose, IconGrab, IconLink, IconLock, IconPlus, IconSearch,
+  IconSparkle, IconTarget, IconTrash, IconWarn, IconZoomIn, IconZoomOut,
 } from './Icons';
 
-const HEADER_H = 34;
-const BAND_H = 46;
-const ZOOM_STEPS = [0.55, 0.72, 0.9, 1.15, 1.5, 2] as const;
+export type Tool = 'select' | 'hand' | 'card' | 'note' | 'frame' | 'connect';
 
-export interface CanvasHandlers {
+export interface BoardHandlers {
   onSelect: (id: ID | null) => void;
-  /** Reschedule: a new start, in whatever track the card was dropped on. */
-  onMove: (id: ID, start: number, branchId?: ID) => void;
-  onCreate: (draft: { start: number; end: number; branchId?: ID; placeId?: ID; title?: string; kind?: Segment['kind'] }, place?: Place) => void;
-  /** Everyone on `fromId` also does `toId`. */
-  onConnect: (fromId: ID, toId: ID) => void;
+  onMoveCards: (ids: ID[], dx: number, dy: number) => void;
+  onCreateCard: (at: Point, draft?: Partial<Segment>, place?: Place) => void;
+  onDeleteCards: (ids: ID[]) => void;
+  onPin: (ids: ID[], pinned: boolean) => void;
   onAssign: (segmentId: ID, personId: ID, on: boolean) => void;
-  onCreateBranch: (name: string, memberIds: ID[], segmentIds: ID[]) => void;
-  onSetBranch: (ids: ID[], branchId?: ID) => void;
+  onLink: (fromId: ID, toId: ID, kind: Link['kind']) => void;
+  onPatchLink: (id: ID, patch: Partial<Link>) => void;
+  onUnlink: (ids: ID[]) => void;
+  onAddSticky: (sticky: Sticky) => void;
+  onPatchSticky: (id: ID, patch: Partial<Sticky>) => void;
+  onDeleteSticky: (id: ID) => void;
+  onAddFrame: (frame: Frame) => void;
+  onPatchFrame: (id: ID, patch: Partial<Frame>) => void;
+  onDeleteFrame: (id: ID) => void;
+  onCreateBranch: (name: string, memberIds: ID[], segmentIds: ID[], rect: Rect) => void;
   onDeleteBranch: (id: ID, keep: boolean) => void;
+  onTidy: () => void;
+  onResolve: () => void;
   onAnnounce: (text: string) => void;
 }
 
 type Drag =
-  | { kind: 'node'; nodeKey: ID; segId: ID; grabDx: number; grabDy: number; x: number; y: number; over: { branchId?: ID; start: number } | null }
-  | { kind: 'wire'; fromKey: string; fromId: ID; x: number; y: number; overKey: string | null }
-  | { kind: 'person'; personId: ID; x: number; y: number; overKey: string | null }
-  | { kind: 'place'; place: Place; x: number; y: number; over: { branchId?: ID; start: number } | null };
+  | { kind: 'pan'; fromScreen: Point; fromView: Point }
+  | { kind: 'marquee'; from: Point; to: Point; additive: boolean }
+  | { kind: 'cards'; ids: ID[]; from: Point; to: Point }
+  | { kind: 'sticky'; id: ID; from: Point; to: Point }
+  | { kind: 'frame'; id: ID; ids: ID[]; stickyIds: ID[]; from: Point; to: Point }
+  | { kind: 'resize'; id: ID; rect: Rect; to: Point }
+  | { kind: 'connect'; fromId: ID; to: Point; overId: ID | null }
+  | { kind: 'person'; personId: ID; to: Point; overId: ID | null }
+  | { kind: 'place'; place: Place; to: Point };
+
+const STICKY_COLOURS = ['#ffb020', '#14d4c4', '#8b7cff', '#ff6b9d', '#a3e635'];
 
 export function CanvasView({
   trip, segments, clock, issues, selectedId, now, handlers,
@@ -64,48 +82,51 @@ export function CanvasView({
   issues: Issue[];
   selectedId: ID | null;
   now: number;
-  handlers: CanvasHandlers;
+  handlers: BoardHandlers;
 }) {
   const zone = axisZone(clock, trip);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const surfaceRef = useRef<HTMLDivElement>(null);
+  const hostRef = useRef<HTMLDivElement>(null);
 
-  const [zoomIx, setZoomIx] = useState(3);
-  const [multi, setMulti] = useState<ID[]>([]);
+  const [view, setView] = useState<Viewport>(() => ({ x: -60, y: -60, zoom: 0.75 }));
+  const [tool, setTool] = useState<Tool>('select');
+  const [sel, setSel] = useState<ID[]>([]);
+  const [selLink, setSelLink] = useState<ID | null>(null);
+  const [selSticky, setSelSticky] = useState<ID | null>(null);
+  const [selFrame, setSelFrame] = useState<ID | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
+  const [spaceDown, setSpaceDown] = useState(false);
   const [hoverPerson, setHoverPerson] = useState<ID | null>(null);
+  const [showFlows, setShowFlows] = useState(true);
   const [shelfOpen, setShelfOpen] = useState(false);
-  const [branchDraft, setBranchDraft] = useState<{ name: string; segmentIds: ID[] } | null>(null);
+  const [branchDraft, setBranchDraft] = useState<{ name: string; ids: ID[] } | null>(null);
+  const [editingSticky, setEditingSticky] = useState<ID | null>(null);
 
-  /* ---------- the model ---------- */
+  /* ---------- derived ---------- */
 
-  const days = useMemo(() => {
-    const from = dateKeyToEpoch(trip.startDate, zone);
-    const to = dateKeyToEpoch(trip.endDate, zone) + 12 * HOUR;
-    const fromSegments = trip.segments.length
-      ? eachDay(
-        Math.min(from, ...trip.segments.map((s) => s.start)),
-        Math.max(to, ...trip.segments.map((s) => s.end)),
-        zone,
-      )
-      : eachDay(from, to, zone);
-    return fromSegments;
-  }, [trip.startDate, trip.endDate, trip.segments, zone]);
+  const visible = useMemo(() => new Set(segments.map((s) => s.id)), [segments]);
+  const cards = useMemo(
+    () => trip.segments.filter((s) => visible.has(s.id) && s.at),
+    [trip.segments, visible],
+  );
+  const rects = useMemo(
+    () => new Map<ID, Rect>(cards.map((s) => [s.id, cardRect(s)])),
+    [cards],
+  );
 
-  const options = useMemo<CanvasOptions>(() => {
-    const scale = ZOOM_STEPS[zoomIx];
-    const { hourStart, hourEnd } = fitHours(trip.segments, days, zone);
-    return {
-      ...DEFAULT_CANVAS,
-      zone, days, hourStart, hourEnd,
-      pxPerMin: DEFAULT_CANVAS.pxPerMin * scale,
-      trackWidth: Math.round(DEFAULT_CANVAS.trackWidth * Math.min(1.35, Math.max(0.75, scale))),
-    };
-  }, [trip.segments, days, zone, zoomIx]);
+  const links = useMemo(
+    () => (trip.links ?? [])
+      .map((l) => {
+        const a = rects.get(l.fromId);
+        const b = rects.get(l.toId);
+        return a && b ? { link: l, geom: connector(a, b) } : null;
+      })
+      .filter((x): x is { link: Link; geom: ReturnType<typeof connector> } => !!x),
+    [trip.links, rects],
+  );
 
-  const model = useMemo<CanvasModel>(
-    () => buildCanvas(trip, segments, options),
-    [trip, segments, options],
+  const flows = useMemo(
+    () => (showFlows ? peopleFlows(trip, rects) : []),
+    [trip, rects, showFlows],
   );
 
   const issueBySegment = useMemo(() => {
@@ -115,165 +136,152 @@ export function CanvasView({
   }, [issues]);
 
   const selection = useMemo(
-    () => new Set<ID>(multi.length ? multi : selectedId ? [selectedId] : []),
-    [multi, selectedId],
+    () => new Set(sel.length ? sel : selectedId ? [selectedId] : []),
+    [sel, selectedId],
   );
 
-  /* ---------- pointer geometry ---------- */
+  const linked = useMemo(() => {
+    const set = new Set<ID>();
+    for (const l of trip.links ?? []) { set.add(l.fromId); set.add(l.toId); }
+    return set;
+  }, [trip.links]);
 
-  const toCanvas = useCallback((clientX: number, clientY: number) => {
-    const el = surfaceRef.current;
+  /* ---------- coordinates ---------- */
+
+  const screenToWorld = useCallback((clientX: number, clientY: number): Point => {
+    const el = hostRef.current;
     if (!el) return { x: 0, y: 0 };
     const r = el.getBoundingClientRect();
-    return { x: clientX - r.left, y: clientY - r.top };
-  }, []);
+    return toWorld(view, clientX - r.left, clientY - r.top);
+  }, [view]);
 
-  /** Where a drop at this point lands, snapped to five minutes. */
-  const dropAt = useCallback((x: number, y: number) => {
-    const hit = hitColumn(model, x);
-    if (!hit) return null;
-    const raw = timeAt(y, hit.column.dayStart, options);
-    return { branchId: hit.track.branchId, start: snap(raw, 5, zone) };
-  }, [model, options, zone]);
-
-  /* ---------- drag machine ----------
-     Tracking is wired up synchronously from the pointerdown handler rather
-     than from an effect. An effect only runs after React has committed, and a
-     fast gesture — a flick of the wrist, or a synthetic event sequence — can
-     deliver its first move before that, which would silently drop the drag. */
+  /** Refs so the pointer handlers installed at pointerdown never read a stale
+   *  closure — the same reason the handlers are wired up synchronously below. */
+  const live = useRef({ view, screenToWorld, trip, handlers, sel, tool });
+  live.current = { view, screenToWorld, trip, handlers, sel, tool };
 
   const dragRef = useRef<Drag | null>(null);
   const stopRef = useRef<(() => void) | null>(null);
 
-  const setDragState = useCallback((next: Drag | null) => {
-    dragRef.current = next;
-    setDrag(next);
-  }, []);
+  const setDragState = useCallback((d: Drag | null) => { dragRef.current = d; setDrag(d); }, []);
 
-  /** Everything the pointer handlers need, kept in a ref so the listeners
-   *  installed at pointerdown never read a stale closure. */
-  const liveRef = useRef({ dropAt, toCanvas, model, trip, handlers, zone });
-  liveRef.current = { dropAt, toCanvas, model, trip, handlers, zone };
-
-  const endDrag = useCallback(() => {
+  const beginDrag = useCallback((start: Drag, onEnd: (d: Drag) => void) => {
     stopRef.current?.();
-    stopRef.current = null;
-  }, []);
-
-  const commit = useCallback(() => {
-    const d = dragRef.current;
-    const { model: m, trip: t, handlers: h, zone: z } = liveRef.current;
-    if (!d) return;
-
-    if (d.kind === 'node' && d.over) {
-      const seg = t.segments.find((s) => s.id === d.segId);
-      if (seg && (seg.start !== d.over.start || (seg.branchId ?? undefined) !== d.over.branchId)) {
-        h.onMove(d.segId, d.over.start, d.over.branchId);
-        h.onAnnounce(
-          `Moved “${seg.title}” to ${fmtDate(d.over.start, z, 'medium')} ${fmtTime(d.over.start, { zone: z })}.`,
-        );
-      }
-    }
-    if (d.kind === 'wire' && d.overKey) {
-      const target = m.nodeByKey.get(d.overKey);
-      if (target && target.id !== d.fromId) {
-        h.onConnect(d.fromId, target.id);
-        const from = t.segments.find((s) => s.id === d.fromId);
-        h.onAnnounce(`Everyone on “${from?.title}” now also does “${target.seg.title}”.`);
-      }
-    }
-    if (d.kind === 'person' && d.overKey) {
-      const target = m.nodeByKey.get(d.overKey);
-      if (target) {
-        const already = target.attendees.includes(d.personId);
-        h.onAssign(target.id, d.personId, !already);
-        const who = t.people.find((p) => p.id === d.personId)?.name ?? 'They';
-        h.onAnnounce(`${who} ${already ? 'removed from' : 'added to'} “${target.seg.title}”.`);
-      }
-    }
-    if (d.kind === 'place' && d.over) {
-      h.onCreate(
-        {
-          start: d.over.start,
-          end: d.over.start + (d.place.dwellMin ?? 90) * MIN,
-          branchId: d.over.branchId,
-          title: d.place.name,
-          kind: kindForPlace(d.place),
-        },
-        d.place,
-      );
-      h.onAnnounce(`Added ${d.place.name} at ${fmtTime(d.over.start, { zone: z })}.`);
-    }
-  }, []);
-
-  const beginDrag = useCallback((next: Drag) => {
-    stopRef.current?.();
-    setDragState(next);
+    setDragState(start);
 
     const move = (e: PointerEvent) => {
       const d = dragRef.current;
       if (!d) return;
-      const { x, y } = liveRef.current.toCanvas(e.clientX, e.clientY);
-      if (d.kind === 'node') {
-        setDragState({ ...d, x, y, over: liveRef.current.dropAt(x - d.grabDx, y - d.grabDy) });
-      } else if (d.kind === 'place') {
-        setDragState({ ...d, x, y, over: liveRef.current.dropAt(x, y) });
-      } else {
-        const el = document.elementFromPoint(e.clientX, e.clientY);
-        const host = el?.closest<HTMLElement>('[data-node-key]');
-        setDragState({ ...d, x, y, overKey: host?.dataset.nodeKey ?? null });
+      if (d.kind === 'pan') {
+        const dx = (e.clientX - d.fromScreen.x) / live.current.view.zoom;
+        const dy = (e.clientY - d.fromScreen.y) / live.current.view.zoom;
+        setView((v) => ({ ...v, x: d.fromView.x - dx, y: d.fromView.y - dy }));
+        return;
       }
-      autoScroll(scrollRef.current, e.clientX, e.clientY);
+      const p = live.current.screenToWorld(e.clientX, e.clientY);
+      if (d.kind === 'connect' || d.kind === 'person') {
+        const el = document.elementFromPoint(e.clientX, e.clientY);
+        const over = el?.closest<HTMLElement>('[data-card-id]')?.dataset.cardId ?? null;
+        setDragState({ ...d, to: p, overId: over });
+      } else if (d.kind === 'resize') {
+        setDragState({ ...d, to: p });
+      } else {
+        setDragState({ ...d, to: p });
+      }
     };
 
-    const up = () => { commit(); setDragState(null); stop(); };
+    const finish = () => {
+      const d = dragRef.current;
+      if (d) onEnd(d);
+      setDragState(null);
+      stop();
+    };
     const cancelKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { setDragState(null); stop(); }
     };
     const stop = () => {
       window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-      window.removeEventListener('pointercancel', up);
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
       window.removeEventListener('keydown', cancelKey);
       stopRef.current = null;
     };
 
     window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-    window.addEventListener('pointercancel', up);
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
     window.addEventListener('keydown', cancelKey);
     stopRef.current = stop;
-  }, [commit, setDragState]);
+  }, [setDragState]);
 
-  useEffect(() => endDrag, [endDrag]);
+  useEffect(() => () => stopRef.current?.(), []);
 
-  /* ---------- derived visuals ---------- */
+  /* ---------- wheel: pan, or zoom with a modifier ---------- */
 
-  const dimPerson = hoverPerson ?? (drag?.kind === 'person' ? drag.personId : null);
-  const lines = useMemo(() => hourLines(options), [options]);
-  const nights = useMemo(() => nightSpans(options), [options]);
-  const height = canvasHeight(options);
+  useEffect(() => {
+    const el = hostRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const r = el.getBoundingClientRect();
+      if (e.ctrlKey || e.metaKey) {
+        setView((v) => zoomAt(v, e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * 0.0022)));
+      } else {
+        setView((v) => ({ ...v, x: v.x + e.deltaX / v.zoom, y: v.y + e.deltaY / v.zoom }));
+      }
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
 
-  const nowY = useMemo(() => {
-    const key = dateKey(now, zone);
-    const column = model.columns.find((c) => c.dayKey === key);
-    if (!column) return null;
-    const mins = (now - column.dayStart) / MIN;
-    const y = yFor(mins, options);
-    return y >= 0 && y <= height ? { x: column.x, w: column.width, y } : null;
-  }, [now, zone, model.columns, options, height]);
+  /* ---------- keyboard ---------- */
 
-  /* ---------- actions ---------- */
+  const fit = useCallback(() => {
+    const el = hostRef.current;
+    if (!el) return;
+    setView(fitTo(contentBounds(trip), el.clientWidth, el.clientHeight));
+  }, [trip]);
 
-  const createAt = (x: number, y: number) => {
-    const at = dropAt(x, y);
-    if (!at) return;
-    handlers.onCreate({ start: at.start, end: at.start + 90 * MIN, branchId: at.branchId });
-  };
+  useEffect(() => {
+    const typing = () => {
+      const a = document.activeElement;
+      return !!a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || (a as HTMLElement).isContentEditable);
+    };
+    const down = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && !typing()) { setSpaceDown(true); e.preventDefault(); return; }
+      if (typing() || e.metaKey || e.ctrlKey) return;
+      const map: Record<string, Tool> = { v: 'select', h: 'hand', c: 'card', n: 'note', f: 'frame', l: 'connect' };
+      const next = map[e.key.toLowerCase()];
+      if (next) { setTool(next); return; }
+      if (e.key === 'Escape') { setSel([]); setSelLink(null); setSelSticky(null); setSelFrame(null); setTool('select'); }
+      if ((e.key === 'Delete' || e.key === 'Backspace')) {
+        if (selLink) { handlers.onUnlink([selLink]); setSelLink(null); e.preventDefault(); }
+        else if (selSticky) { handlers.onDeleteSticky(selSticky); setSelSticky(null); e.preventDefault(); }
+        else if (selFrame) { handlers.onDeleteFrame(selFrame); setSelFrame(null); e.preventDefault(); }
+      }
+    };
+    const up = (e: KeyboardEvent) => { if (e.code === 'Space') setSpaceDown(false); };
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
+  }, [handlers, selLink, selSticky, selFrame]);
 
-  const toggleSelect = (id: ID, additive: boolean) => {
-    if (!additive) { setMulti([]); handlers.onSelect(id); return; }
-    setMulti((prev) => {
+  // Fit once, as soon as there is something to fit to.
+  const fitted = useRef(false);
+  useEffect(() => {
+    if (fitted.current || !cards.length) return;
+    fitted.current = true;
+    fit();
+  }, [cards.length, fit]);
+
+  /* ---------- selection ---------- */
+
+  const clearOthers = () => { setSelLink(null); setSelSticky(null); setSelFrame(null); };
+
+  const selectCard = (id: ID, additive: boolean) => {
+    clearOthers();
+    if (!additive) { setSel([id]); handlers.onSelect(id); return; }
+    setSel((prev) => {
       const base = prev.length ? prev : selectedId ? [selectedId] : [];
       const next = base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
       handlers.onSelect(next[next.length - 1] ?? null);
@@ -281,260 +289,393 @@ export function CanvasView({
     });
   };
 
-  const makeBranch = () => {
-    const ids = [...selection];
-    if (!ids.length) return;
-    // Name it after where the group is going, not after whichever card was
-    // clicked first: "Bull Temple group" beats "EK 22 · Manchester → Dubai group".
-    const chosen = trip.segments
-      .filter((s) => ids.includes(s.id))
-      .sort((a, b) => a.start - b.start);
-    const first = chosen[0];
-    const place = trip.places.find((p) => p.id === (first?.placeId ?? first?.toPlaceId));
-    const label = (place?.name ?? first?.title ?? '').split(/[·(]/)[0].trim();
-    setBranchDraft({
-      name: label ? `${label.slice(0, 26)} group` : 'Side trip',
-      segmentIds: ids,
+  /* ---------- surface gestures ---------- */
+
+  const panning = tool === 'hand' || spaceDown;
+
+  const onSurfacePointerDown = (e: React.PointerEvent) => {
+    if ((e.target as HTMLElement).closest('[data-board-item]')) return;
+    const p = screenToWorld(e.clientX, e.clientY);
+
+    if (panning || e.button === 1) {
+      beginDrag(
+        { kind: 'pan', fromScreen: { x: e.clientX, y: e.clientY }, fromView: { x: view.x, y: view.y } },
+        () => {},
+      );
+      return;
+    }
+
+    if (tool === 'card') {
+      handlers.onCreateCard(p);
+      setTool('select');
+      return;
+    }
+    if (tool === 'note') {
+      handlers.onAddSticky({
+        id: `sty_${Math.random().toString(36).slice(2, 10)}`,
+        text: '', at: p, color: STICKY_COLOURS[trip.stickies.length % STICKY_COLOURS.length],
+      });
+      setTool('select');
+      return;
+    }
+    if (tool === 'frame') {
+      beginDrag({ kind: 'marquee', from: p, to: p, additive: false }, (d) => {
+        if (d.kind !== 'marquee') return;
+        const rect = normalise(d.from, d.to);
+        if (rect.w < 60 || rect.h < 60) { setTool('select'); return; }
+        handlers.onAddFrame({
+          id: `frm_${Math.random().toString(36).slice(2, 10)}`,
+          title: 'Frame', rect, color: 'var(--line-3)',
+        });
+        setTool('select');
+      });
+      return;
+    }
+
+    // Select tool on empty space: marquee.
+    if (!e.shiftKey) { setSel([]); handlers.onSelect(null); clearOthers(); }
+    beginDrag({ kind: 'marquee', from: p, to: p, additive: e.shiftKey }, (d) => {
+      if (d.kind !== 'marquee') return;
+      const rect = normalise(d.from, d.to);
+      if (rect.w < 4 && rect.h < 4) return;
+      const caught = cardsIn(live.current.trip, rect).filter((id) => visible.has(id));
+      setSel((prev) => (d.additive ? [...new Set([...prev, ...caught])] : caught));
+      handlers.onSelect(caught[caught.length - 1] ?? null);
     });
   };
 
-  if (!trip.people.length && !trip.segments.length) {
-    return <CanvasEmpty onCreate={() => handlers.onCreate({
-      start: dateKeyToEpoch(trip.startDate, zone) + 10 * HOUR,
-      end: dateKeyToEpoch(trip.startDate, zone) + 12 * HOUR,
-    })} />;
-  }
+  /* ---------- card gestures ---------- */
+
+  const startCardDrag = (id: ID, e: React.PointerEvent) => {
+    const p = screenToWorld(e.clientX, e.clientY);
+    const ids = selection.has(id) ? [...selection] : [id];
+    beginDrag({ kind: 'cards', ids, from: p, to: p }, (d) => {
+      if (d.kind !== 'cards') return;
+      const dx = d.to.x - d.from.x;
+      const dy = d.to.y - d.from.y;
+      if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
+      handlers.onMoveCards(d.ids, dx, dy);
+      const landed = frameAt(live.current.trip, { x: (rects.get(d.ids[0])?.x ?? 0) + dx + CARD_W / 2, y: (rects.get(d.ids[0])?.y ?? 0) + dy + CARD_H / 2 });
+      handlers.onAnnounce(
+        landed
+          ? `Moved ${d.ids.length} ${d.ids.length === 1 ? 'card' : 'cards'} into ${landed.title}.`
+          : `Moved ${d.ids.length} ${d.ids.length === 1 ? 'card' : 'cards'}.`,
+      );
+    });
+  };
+
+  const startConnect = (fromId: ID, e: React.PointerEvent) => {
+    const p = screenToWorld(e.clientX, e.clientY);
+    beginDrag({ kind: 'connect', fromId, to: p, overId: null }, (d) => {
+      if (d.kind !== 'connect' || !d.overId || d.overId === d.fromId) return;
+      handlers.onLink(d.fromId, d.overId, e.altKey ? 'then' : 'travel');
+      const a = live.current.trip.segments.find((s) => s.id === d.fromId);
+      const b = live.current.trip.segments.find((s) => s.id === d.overId);
+      handlers.onAnnounce(`“${b?.title}” now comes after “${a?.title}”.`);
+    });
+  };
+
+  /* ---------- ghost geometry while dragging ---------- */
+
+  const ghostDelta = drag?.kind === 'cards'
+    ? { dx: drag.to.x - drag.from.x, dy: drag.to.y - drag.from.y, ids: new Set(drag.ids) }
+    : null;
+  const frameDelta = drag?.kind === 'frame'
+    ? { dx: drag.to.x - drag.from.x, dy: drag.to.y - drag.from.y }
+    : null;
+
+  const rectFor = (seg: Segment): Rect => {
+    const base = cardRect(seg);
+    if (ghostDelta?.ids.has(seg.id)) return { ...base, x: base.x + ghostDelta.dx, y: base.y + ghostDelta.dy };
+    if (frameDelta && drag?.kind === 'frame' && drag.ids.includes(seg.id)) {
+      return { ...base, x: base.x + frameDelta.dx, y: base.y + frameDelta.dy };
+    }
+    return base;
+  };
+
+  const dimPerson = hoverPerson ?? (drag?.kind === 'person' ? drag.personId : null);
+
+  const blank = !cards.length && !trip.stickies.length && !trip.frames.length;
 
   return (
-    <div className="cv" data-dragging={drag ? drag.kind : undefined}>
-      <div className="cv__tools">
-        <button className="btn btn--sm btn--primary" onClick={() => {
-          const start = dateKeyToEpoch(model.columns[0]?.dayKey ?? trip.startDate, zone) + 10 * HOUR;
-          handlers.onCreate({ start, end: start + 90 * MIN });
-        }}>
-          <IconPlus size={14} /> Block
-        </button>
+    <div className="bd" data-tool={panning ? 'hand' : tool} data-dragging={drag?.kind ?? undefined}>
+      <Toolbar
+        tool={tool} onTool={setTool}
+        zoom={view.zoom}
+        onZoom={(f) => {
+          const el = hostRef.current;
+          if (el) setView((v) => zoomAt(v, el.clientWidth / 2, el.clientHeight / 2, f));
+        }}
+        onFit={fit}
+        onReset={() => setView((v) => ({ ...v, zoom: 1 }))}
+        selection={selection.size}
+        showFlows={showFlows} onFlows={() => setShowFlows((f) => !f)}
+        shelfOpen={shelfOpen} onShelf={() => setShelfOpen((o) => !o)}
+        onTidy={handlers.onTidy}
+        onResolve={handlers.onResolve}
+        onSubTrip={() => {
+          const ids = [...selection];
+          if (!ids.length) return;
+          const chosen = trip.segments.filter((s) => ids.includes(s.id)).sort((a, b) => a.start - b.start);
+          const place = trip.places.find((p) => p.id === (chosen[0]?.placeId ?? chosen[0]?.toPlaceId));
+          const label = (place?.name ?? chosen[0]?.title ?? '').split(/[·(]/)[0].trim();
+          setBranchDraft({ name: label ? `${label.slice(0, 26)} group` : 'Side trip', ids });
+        }}
+        onPin={() => {
+          const ids = [...selection];
+          const allPinned = ids.every((id) => trip.segments.find((s) => s.id === id)?.pinned);
+          handlers.onPin(ids, !allPinned);
+        }}
+        pinned={[...selection].every((id) => trip.segments.find((s) => s.id === id)?.pinned)}
+        onDelete={() => { handlers.onDeleteCards([...selection]); setSel([]); handlers.onSelect(null); }}
+        branches={trip.branches}
+        onFocusBranch={(id) => {
+          const frame = trip.frames.find((f) => f.branchId === id);
+          const el = hostRef.current;
+          if (frame && el) setView(fitTo(frame.rect, el.clientWidth, el.clientHeight));
+        }}
+      />
 
-        <button className="btn btn--sm" aria-pressed={shelfOpen} onClick={() => setShelfOpen((s) => !s)}>
-          <IconSearch size={14} /> Places
-        </button>
-
-        <span className="cv__sep" role="separator" />
-
-        <button
-          className="btn btn--sm" disabled={selection.size === 0} onClick={makeBranch}
-          title="Peel the selected cards off into a sub-trip"
+      <div className="bd__frame">
+        <div
+          className="bd__host"
+          ref={hostRef}
+          onPointerDown={onSurfacePointerDown}
+          role="application"
+          aria-label="Planning board"
+          style={{
+            // The dot grid is part of the board, so it pans and zooms with it.
+            backgroundSize: `${24 * view.zoom}px ${24 * view.zoom}px`,
+            backgroundPosition: `${-view.x * view.zoom}px ${-view.y * view.zoom}px`,
+          }}
         >
-          <IconBoard size={14} /> Sub-trip{selection.size > 0 && ` (${selection.size})`}
-        </button>
-        {selection.size > 0 && (
-          <>
-            <button className="btn btn--sm btn--ghost" onClick={() => handlers.onSetBranch([...selection], undefined)}>
-              Back to main
-            </button>
-            <button className="btn btn--sm btn--ghost" onClick={() => { setMulti([]); handlers.onSelect(null); }}>
-              Clear
-            </button>
-          </>
-        )}
-
-        <span className="grow" />
-
-        {trip.branches.length > 0 && (
-          <span className="cv__legend">
-            {trip.branches.map((b) => {
-              const st = branchStats(trip, b);
-              return (
-                <button
-                  key={b.id} className="cv__legendchip" style={{ ['--c' as string]: b.color }}
-                  onClick={() => handlers.onSetBranch([...selection], b.id)}
-                  disabled={selection.size === 0}
-                  title={selection.size ? `Move ${selection.size} selected into ${b.name}` : `${b.name}: ${st.members} people, ${st.segments} stops`}
-                >
-                  <span className="cv__legenddot" />
-                  {b.name}
-                  <span className="cv__legendn">{st.members}</span>
-                </button>
-              );
-            })}
-          </span>
-        )}
-
-        <span className="cv__zoom">
-          <button className="btn btn--icon btn--sm btn--ghost" onClick={() => setZoomIx((z) => Math.max(0, z - 1))}
-            disabled={zoomIx === 0} aria-label="Zoom out"><IconZoomOut size={14} /></button>
-          <span className="cv__zoomv mono">{Math.round(ZOOM_STEPS[zoomIx] * 100)}%</span>
-          <button className="btn btn--icon btn--sm btn--ghost" onClick={() => setZoomIx((z) => Math.min(ZOOM_STEPS.length - 1, z + 1))}
-            disabled={zoomIx === ZOOM_STEPS.length - 1} aria-label="Zoom in"><IconZoomIn size={14} /></button>
-        </span>
-      </div>
-
-      <div className="cv__frame">
-        <div className="cv__scroll" ref={scrollRef}>
-          <div className="cv__inner" style={{ width: model.width, height: height + HEADER_H + BAND_H }}>
-
-            {/* --- day headers and the who-is-here band --- */}
-            <div className="cv__head" style={{ width: model.width, height: HEADER_H + BAND_H }}>
-              <div className="cv__corner" style={{ width: options.gutter }}>
-                <span className="cv__cornerlabel">{zone.split('/').pop()?.replace(/_/g, ' ')}</span>
-              </div>
-              {model.columns.map((col) => (
-                <DayHeader
-                  key={col.dayKey}
-                  col={col} zone={zone} trip={trip} model={model}
-                  dimPerson={dimPerson}
-                  onHoverPerson={setHoverPerson}
-                  onGrabPerson={(personId, e) => {
-                    const { x, y } = toCanvas(e.clientX, e.clientY);
-                    beginDrag({ kind: 'person', personId, x, y, overKey: null });
-                  }}
-                  onDeleteBranch={handlers.onDeleteBranch}
-                />
-              ))}
-            </div>
-
-            {/* --- the grid surface --- */}
-            <div
-              className="cv__surface"
-              ref={surfaceRef}
-              style={{ width: model.width, height, top: HEADER_H + BAND_H }}
-              onDoubleClick={(e) => {
-                if ((e.target as HTMLElement).closest('[data-node-key]')) return;
-                const { x, y } = toCanvas(e.clientX, e.clientY);
-                createAt(x, y);
-              }}
-              onPointerDown={(e) => {
-                if ((e.target as HTMLElement).closest('[data-node-key]')) return;
-                if (e.shiftKey) return;
-                setMulti([]);
-                handlers.onSelect(null);
-              }}
-            >
-              {/* hour rules and night shading */}
-              {nights.map((n, i) => (
-                <div className="cv__night" key={i} style={{ top: n.top, height: n.height, width: model.width }} />
-              ))}
-              {lines.map((l) => (
-                <div className="cv__rule" key={l.hour} data-major={l.major || undefined}
-                  style={{ top: l.y, width: model.width }} />
-              ))}
-
-              {/* day columns and their tracks */}
-              {model.columns.map((col) => (
-                <div key={col.dayKey} className="cv__col" data-weekend={col.weekend || undefined}
-                  style={{ left: col.x, width: col.width, height }}>
-                  {col.tracks.map((t) => (
-                    <div
-                      key={t.id} className="cv__track" data-branch={t.branchId ? 'yes' : undefined}
-                      style={{ left: t.x, width: t.width, height, ['--c' as string]: t.color ?? 'transparent' }}
-                    />
-                  ))}
-                </div>
-              ))}
-
-              {/* free-time bands for whoever is being hovered */}
-              {dimPerson && model.presence
-                .filter((p) => p.personId === dimPerson && p.present)
-                .flatMap((p) => {
-                  const col = model.columns.find((c) => c.dayKey === p.dayKey);
-                  if (!col) return [];
-                  return p.free.map((f, i) => (
-                    <div
-                      key={`${p.dayKey}-${i}`} className="cv__free"
-                      style={{
-                        left: col.x, width: col.width,
-                        top: yFor(f.fromMin, options),
-                        height: yFor(f.toMin, options) - yFor(f.fromMin, options),
-                        ['--c' as string]: trip.people.find((x) => x.id === dimPerson)?.color ?? 'var(--accent)',
-                      }}
-                    >
-                      <span className="cv__freelabel">free</span>
-                    </div>
-                  ));
-                })}
-
-              {/* the flows */}
-              <svg className="cv__wires" width={model.width} height={height} aria-hidden="true">
-                <defs>
-                  <marker id="cv-arrow" viewBox="0 0 8 8" refX="6.5" refY="4" markerWidth="7" markerHeight="7" orient="auto">
-                    <path d="M1 1 L7 4 L1 7 z" fill="context-stroke" />
-                  </marker>
-                </defs>
-                {model.edges.map((edge) => (
-                  <EdgeLine
-                    key={edge.key} edge={edge} trip={trip}
-                    dim={dimPerson !== null && !edge.personIds.includes(dimPerson)}
-                    lit={selection.has(edge.fromId) || selection.has(edge.toId)}
-                  />
-                ))}
-                {drag?.kind === 'wire' && <WireGhost drag={drag} model={model} />}
-              </svg>
-
-              {/* edge labels sit above the wires so they stay readable */}
-              {model.edges.filter((e) => !e.feasible || e.personIds.length > 1).map((edge) => (
-                <EdgeChip
-                  key={`c-${edge.key}`} edge={edge} trip={trip}
-                  dim={dimPerson !== null && !edge.personIds.includes(dimPerson)}
-                />
-              ))}
-
-              {/* now line */}
-              {nowY && (
-                <div className="cv__now" style={{ left: nowY.x, width: nowY.w, top: nowY.y }}>
-                  <span className="cv__nowdot" />
-                </div>
-              )}
-
-              {/* the cards */}
-              {model.nodes.map((node) => (
-                <NodeCard
-                  key={node.key}
-                  node={node} trip={trip} zone={zone}
-                  selected={selection.has(node.id)}
-                  dim={dimPerson !== null && !node.attendees.includes(dimPerson)}
-                  dropTarget={(drag?.kind === 'wire' || drag?.kind === 'person') && drag.overKey === node.key}
-                  dragging={drag?.kind === 'node' && drag.segId === node.id}
-                  issues={issueBySegment.get(node.id) ?? []}
-                  onSelect={(additive) => toggleSelect(node.id, additive)}
-                  onGrab={(e) => {
-                    const { x, y } = toCanvas(e.clientX, e.clientY);
-                    beginDrag({
-                      kind: 'node', nodeKey: node.key, segId: node.id,
-                      grabDx: x - node.x, grabDy: y - node.y, x, y, over: null,
+          <div
+            className="bd__world"
+            style={{
+              transform: `translate(${-view.x * view.zoom}px, ${-view.y * view.zoom}px) scale(${view.zoom})`,
+            }}
+          >
+            {/* frames sit behind everything */}
+            {(trip.frames ?? []).map((f) => (
+              <FrameBox
+                key={f.id} frame={f} trip={trip}
+                selected={selFrame === f.id}
+                delta={drag?.kind === 'frame' && drag.id === f.id ? frameDelta : null}
+                resizing={drag?.kind === 'resize' && drag.id === f.id ? drag.to : null}
+                onSelect={() => { setSelFrame(f.id); setSel([]); setSelLink(null); setSelSticky(null); handlers.onSelect(null); }}
+                onGrab={(e) => {
+                  const p = screenToWorld(e.clientX, e.clientY);
+                  const inside = trip.segments.filter((s) => s.at && contains(f.rect, s.at)).map((s) => s.id);
+                  const stickies = trip.stickies.filter((n) => contains(f.rect, n.at)).map((n) => n.id);
+                  beginDrag({ kind: 'frame', id: f.id, ids: inside, stickyIds: stickies, from: p, to: p }, (d) => {
+                    if (d.kind !== 'frame') return;
+                    const dx = d.to.x - d.from.x;
+                    const dy = d.to.y - d.from.y;
+                    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
+                    // A frame carries what is inside it, the way a section does.
+                    handlers.onPatchFrame(f.id, { rect: { ...f.rect, x: f.rect.x + dx, y: f.rect.y + dy } });
+                    if (d.ids.length) handlers.onMoveCards(d.ids, dx, dy);
+                    for (const id of d.stickyIds) {
+                      const n = trip.stickies.find((x) => x.id === id);
+                      if (n) handlers.onPatchSticky(id, { at: { x: n.at.x + dx, y: n.at.y + dy } });
+                    }
+                  });
+                }}
+                onResize={(e) => {
+                  const p = screenToWorld(e.clientX, e.clientY);
+                  beginDrag({ kind: 'resize', id: f.id, rect: f.rect, to: p }, (d) => {
+                    if (d.kind !== 'resize') return;
+                    handlers.onPatchFrame(f.id, {
+                      rect: {
+                        ...f.rect,
+                        w: Math.max(160, d.to.x - f.rect.x),
+                        h: Math.max(120, d.to.y - f.rect.y),
+                      },
                     });
-                  }}
-                  onWire={(e) => {
-                    const { x, y } = toCanvas(e.clientX, e.clientY);
-                    beginDrag({ kind: 'wire', fromKey: node.key, fromId: node.id, x, y, overKey: null });
-                  }}
-                  onHoverPerson={setHoverPerson}
+                  });
+                }}
+                onRename={(title) => handlers.onPatchFrame(f.id, { title })}
+                onDelete={() => { handlers.onDeleteFrame(f.id); setSelFrame(null); }}
+                onDissolveBranch={() => f.branchId && handlers.onDeleteBranch(f.branchId, true)}
+              />
+            ))}
+
+            {/* connectors and flows */}
+            <svg className="bd__wires" aria-hidden="true">
+              <defs>
+                <marker id="bd-arrow" viewBox="0 0 9 9" refX="7.5" refY="4.5" markerWidth="6.5" markerHeight="6.5" orient="auto">
+                  <path d="M1 1 L8 4.5 L1 8 z" fill="context-stroke" />
+                </marker>
+              </defs>
+
+              {showFlows && flows.map((flow) => (
+                <path
+                  key={`flow-${flow.key}`}
+                  className="bd__flow"
+                  d={flow.path}
+                  strokeWidth={Math.min(6, 1.2 + flow.personIds.length * 0.7)}
+                  stroke={flow.personIds.length === 1
+                    ? trip.people.find((p) => p.id === flow.personIds[0])?.color ?? 'var(--ink-3)'
+                    : 'var(--ink-3)'}
+                  data-dim={dimPerson !== null && !flow.personIds.includes(dimPerson) ? 'yes' : undefined}
+                  fill="none"
                 />
               ))}
 
-              {/* drop preview */}
-              {drag?.kind === 'node' && drag.over && <DropGhost model={model} drag={drag} options={options} zone={zone} trip={trip} />}
-              {drag?.kind === 'place' && drag.over && (
-                <div className="cv__placeghost" style={{
-                  left: drag.x - 90, top: drag.y - 14,
-                }}>
-                  {drag.place.name} · {fmtTime(drag.over.start, { zone })}
-                </div>
+              {links.map(({ link, geom }) => (
+                <g key={link.id}>
+                  <path
+                    className="bd__wirehit" d={geom.path} fill="none"
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      setSelLink(link.id); setSel([]); setSelFrame(null); setSelSticky(null);
+                    }}
+                  />
+                  <path
+                    className="bd__wire" d={geom.path} fill="none"
+                    data-kind={link.kind}
+                    data-on={selLink === link.id || undefined}
+                    markerEnd="url(#bd-arrow)"
+                  />
+                </g>
+              ))}
+
+              {drag?.kind === 'connect' && (
+                <ConnectGhost rect={rects.get(drag.fromId)} to={drag.to} />
               )}
-            </div>
+            </svg>
+
+            {/* connector labels, above the wires */}
+            {links.map(({ link, geom }) => (
+              <LinkChip
+                key={`c-${link.id}`}
+                link={link} at={geom.mid}
+                trip={trip} zone={zone}
+                selected={selLink === link.id}
+                onSelect={() => { setSelLink(link.id); setSel([]); }}
+                onToggleKind={() => handlers.onPatchLink(link.id, { kind: link.kind === 'travel' ? 'then' : 'travel' })}
+                onDelete={() => { handlers.onUnlink([link.id]); setSelLink(null); }}
+              />
+            ))}
+
+            {showFlows && flows.filter((f) => f.personIds.length > 1).map((flow) => (
+              <div
+                key={`fl-${flow.key}`} className="bd__flowchip"
+                style={{ left: flow.mid.x, top: flow.mid.y }}
+                data-dim={dimPerson !== null && !flow.personIds.includes(dimPerson) ? 'yes' : undefined}
+              >
+                <span className="avatar-stack">
+                  {flow.personIds.slice(0, 4).map((id) => {
+                    const p = trip.people.find((x) => x.id === id);
+                    return p ? (
+                      <span key={id} className="avatar avatar--sm" style={{ ['--c' as string]: p.color }} title={p.name}>
+                        {initials(p.name)}
+                      </span>
+                    ) : null;
+                  })}
+                </span>
+              </div>
+            ))}
+
+            {/* stickies */}
+            {(trip.stickies ?? []).map((n) => (
+              <StickyNote
+                key={n.id} note={n}
+                selected={selSticky === n.id}
+                editing={editingSticky === n.id}
+                delta={drag?.kind === 'sticky' && drag.id === n.id
+                  ? { dx: drag.to.x - drag.from.x, dy: drag.to.y - drag.from.y }
+                  : (frameDelta && drag?.kind === 'frame' && drag.stickyIds.includes(n.id) ? frameDelta : null)}
+                onSelect={() => { setSelSticky(n.id); setSel([]); setSelLink(null); setSelFrame(null); handlers.onSelect(null); }}
+                onEdit={() => setEditingSticky(n.id)}
+                onCommit={(text) => { handlers.onPatchSticky(n.id, { text }); setEditingSticky(null); }}
+                onGrab={(e) => {
+                  const p = screenToWorld(e.clientX, e.clientY);
+                  beginDrag({ kind: 'sticky', id: n.id, from: p, to: p }, (d) => {
+                    if (d.kind !== 'sticky') return;
+                    const dx = d.to.x - d.from.x;
+                    const dy = d.to.y - d.from.y;
+                    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
+                    handlers.onPatchSticky(n.id, { at: { x: n.at.x + dx, y: n.at.y + dy } });
+                  });
+                }}
+                onDelete={() => { handlers.onDeleteSticky(n.id); setSelSticky(null); }}
+              />
+            ))}
+
+            {/* cards */}
+            {cards.map((seg) => (
+              <BoardCard
+                key={seg.id}
+                seg={seg} rect={rectFor(seg)} trip={trip} zone={zone}
+                selected={selection.has(seg.id)}
+                dim={dimPerson !== null && !attendeesOf(seg, trip).includes(dimPerson)}
+                dropTarget={(drag?.kind === 'connect' || drag?.kind === 'person') && drag.overId === seg.id}
+                wired={linked.has(seg.id) || isScheduled(trip, seg)}
+                issues={issueBySegment.get(seg.id) ?? []}
+                connectMode={tool === 'connect'}
+                onSelect={(additive) => selectCard(seg.id, additive)}
+                onGrab={(e) => startCardDrag(seg.id, e)}
+                onConnect={(e) => startConnect(seg.id, e)}
+                onHoverPerson={setHoverPerson}
+                onTogglePin={() => handlers.onPin([seg.id], !seg.pinned)}
+              />
+            ))}
+
+            {/* marquee */}
+            {drag?.kind === 'marquee' && (
+              <div className="bd__marquee" style={rectStyle(normalise(drag.from, drag.to))} />
+            )}
+
+            {drag?.kind === 'place' && (
+              <div className="bd__placeghost" style={{ left: drag.to.x, top: drag.to.y }}>
+                {drag.place.name}
+              </div>
+            )}
           </div>
+
+          {blank && (
+            <BoardEmpty
+              hasSegments={trip.segments.length > 0}
+              onTidy={handlers.onTidy}
+              onAdd={() => handlers.onCreateCard({ x: 120, y: 120 })}
+            />
+          )}
+
+          <Roster
+            trip={trip} now={now} zone={zone}
+            dimPerson={dimPerson}
+            onHover={setHoverPerson}
+            onGrab={(personId, e) => {
+              const p = screenToWorld(e.clientX, e.clientY);
+              beginDrag({ kind: 'person', personId, to: p, overId: null }, (d) => {
+                if (d.kind !== 'person' || !d.overId) return;
+                const target = live.current.trip.segments.find((s) => s.id === d.overId);
+                if (!target) return;
+                const already = attendeesOf(target, live.current.trip).includes(d.personId);
+                handlers.onAssign(target.id, d.personId, !already);
+                const who = live.current.trip.people.find((x) => x.id === d.personId)?.name ?? 'They';
+                handlers.onAnnounce(`${who} ${already ? 'removed from' : 'added to'} “${target.title}”.`);
+              });
+            }}
+          />
+
+          {drag?.kind === 'person' && (
+            <div className="bd__dragface" style={{ left: 0, top: 0 }} aria-hidden="true" />
+          )}
         </div>
 
         {shelfOpen && (
-          <aside className="cv__shelf" aria-label="Places">
+          <aside className="bd__shelf" aria-label="Places">
             <div className="row row--between">
-              <h3 className="cv__shelfhead">Add a place</h3>
+              <h3 className="bd__shelfhead">Add a place</h3>
               <button className="btn btn--icon btn--sm btn--ghost" onClick={() => setShelfOpen(false)} aria-label="Close places panel">
                 <IconClose size={14} />
               </button>
             </div>
-            <p className="cv__shelfhelp">
-              Search, or paste a Google Maps link. Drag a card onto the grid to put it on a day —
-              or press its button to drop it on the first free morning.
+            <p className="bd__shelfhelp">
+              Search, or paste a Google Maps link. Picking one drops a card on the board — drag it
+              wherever it belongs.
             </p>
             <PlaceSearch
               zone={trip.baseTimezone}
@@ -542,41 +683,40 @@ export function CanvasView({
               near={trip.places[0] ? { lat: trip.places[0].lat, lon: trip.places[0].lon } : undefined}
               autoFocus
               onPick={(place) => {
-                const start = dateKeyToEpoch(model.columns[0]?.dayKey ?? trip.startDate, zone) + 10 * HOUR;
-                handlers.onCreate(
-                  { start, end: start + (place.dwellMin ?? 90) * MIN, title: place.name, kind: kindForPlace(place) },
-                  place,
-                );
-                handlers.onAnnounce(`${place.name} added to ${fmtDate(start, zone, 'medium')}.`);
+                const el = hostRef.current;
+                const at = el
+                  ? screenToWorld(el.getBoundingClientRect().left + el.clientWidth / 2,
+                                  el.getBoundingClientRect().top + el.clientHeight / 2)
+                  : nextFreeSpot(trip);
+                handlers.onCreateCard(nextFreeSpot(trip, at), { title: place.name, kind: kindForPlace(place) }, place);
+                handlers.onAnnounce(`${place.name} added to the board.`);
               }}
             />
-
             {trip.places.length > 0 && (
               <>
-                <p className="label" style={{ marginTop: 'var(--s-4)' }}>On this trip · drag onto a day</p>
-                <ul className="cv__cards">
+                <p className="label" style={{ marginTop: 'var(--s-4)' }}>On this trip</p>
+                <ul className="bd__cards">
                   {trip.places.map((p) => (
                     <li key={p.id}>
-                      <div
-                        className="cv__placecard"
-                        onPointerDown={(e) => {
-                          e.preventDefault();
-                          const { x, y } = toCanvas(e.clientX, e.clientY);
-                          beginDrag({ kind: 'place', place: p, x, y, over: null });
+                      <button
+                        className="bd__placecard"
+                        onClick={() => {
+                          handlers.onCreateCard(nextFreeSpot(trip), { title: p.name, kind: kindForPlace(p), placeId: p.id });
+                          handlers.onAnnounce(`${p.name} added to the board.`);
                         }}
                       >
-                        <IconGrab size={13} />
+                        <IconPlus size={13} />
                         <span className="grow truncate">{p.name}</span>
                         {p.url && (
                           <a
-                            className="cv__placelink" href={p.url} target="_blank" rel="noreferrer noopener"
-                            onPointerDown={(e) => e.stopPropagation()}
+                            className="bd__placelink" href={p.url} target="_blank" rel="noreferrer noopener"
+                            onClick={(e) => e.stopPropagation()}
                             aria-label={`Open ${p.name} in maps`}
                           >
                             <IconLink size={12} />
                           </a>
                         )}
-                      </div>
+                      </button>
                     </li>
                   ))}
                 </ul>
@@ -586,17 +726,25 @@ export function CanvasView({
         )}
       </div>
 
-      {/* hour gutter, painted over the scroller so it never scrolls away */}
-      <HourGutter options={options} lines={lines} topOffset={HEADER_H + BAND_H} scrollRef={scrollRef} />
-
       {branchDraft && (
         <BranchDialog
           trip={trip} draft={branchDraft}
           onClose={() => setBranchDraft(null)}
           onCreate={(name, memberIds) => {
-            handlers.onCreateBranch(name, memberIds, branchDraft.segmentIds);
+            const chosen = trip.segments.filter((s) => branchDraft.ids.includes(s.id) && s.at);
+            const pad = 44;
+            const xs = chosen.map((s) => s.at!.x);
+            const ys = chosen.map((s) => s.at!.y);
+            const rect: Rect = chosen.length
+              ? {
+                x: Math.min(...xs) - pad, y: Math.min(...ys) - pad - 26,
+                w: Math.max(...xs) + CARD_W - Math.min(...xs) + pad * 2,
+                h: Math.max(...ys) + CARD_H - Math.min(...ys) + pad * 2 + 26,
+              }
+              : { x: 0, y: 0, w: 460, h: 320 };
+            handlers.onCreateBranch(name, memberIds, branchDraft.ids, rect);
             setBranchDraft(null);
-            setMulti([]);
+            setSel([]);
           }}
         />
       )}
@@ -606,161 +754,179 @@ export function CanvasView({
 
 /* ============================================================ */
 
-function DayHeader({
-  col, zone, trip, model, dimPerson, onHoverPerson, onGrabPerson, onDeleteBranch,
+function Toolbar({
+  tool, onTool, zoom, onZoom, onFit, onReset, selection, showFlows, onFlows, shelfOpen, onShelf,
+  onTidy, onResolve, onSubTrip, onPin, pinned, onDelete, branches, onFocusBranch,
 }: {
-  col: CanvasModel['columns'][number];
-  zone: string; trip: Trip; model: CanvasModel;
-  dimPerson: ID | null;
-  onHoverPerson: (id: ID | null) => void;
-  onGrabPerson: (id: ID, e: React.PointerEvent) => void;
-  onDeleteBranch: (id: ID, keep: boolean) => void;
+  tool: Tool; onTool: (t: Tool) => void;
+  zoom: number; onZoom: (factor: number) => void; onFit: () => void; onReset: () => void;
+  selection: number;
+  showFlows: boolean; onFlows: () => void;
+  shelfOpen: boolean; onShelf: () => void;
+  onTidy: () => void; onResolve: () => void; onSubTrip: () => void;
+  onPin: () => void; pinned: boolean; onDelete: () => void;
+  branches: Trip['branches'];
+  onFocusBranch: (id: ID) => void;
 }) {
-  const here = model.presence.filter((p) => p.dayKey === col.dayKey && p.present);
-  const arriving = here.filter((p) => {
-    const prev = model.presence.find(
-      (x) => x.personId === p.personId && x.dayKey === model.columns[col.index - 1]?.dayKey,
-    );
-    return col.index === 0 ? true : !prev?.present;
-  });
+  const tools: { id: Tool; label: string; key: string; Icon: (p: { size?: number }) => ReactElement }[] = [
+    { id: 'select', label: 'Select', key: 'V', Icon: IconTarget },
+    { id: 'hand', label: 'Pan', key: 'H', Icon: IconGrab },
+    { id: 'card', label: 'Card', key: 'C', Icon: IconPlus },
+    { id: 'note', label: 'Note', key: 'N', Icon: IconBoard },
+    { id: 'frame', label: 'Frame', key: 'F', Icon: IconBoard },
+    { id: 'connect', label: 'Connect', key: 'L', Icon: IconLink },
+  ];
 
   return (
-    <div className="cv__day" style={{ left: col.x, width: col.width }} data-weekend={col.weekend || undefined}>
-      <div className="cv__dayhead">
-        <span className="cv__dayname">{fmtDate(col.dayStart, zone, 'weekday')}</span>
-        <span className="cv__daydate">{fmtDate(col.dayStart, zone, 'medium')}</span>
-        <span className="grow" />
-        <span className="cv__daycount">{here.length ? `${here.length} here` : '—'}</span>
+    <div className="bd__tools">
+      <div className="bd__toolgroup" role="toolbar" aria-label="Board tools">
+        {tools.map((t) => (
+          <button
+            key={t.id} className="bd__tool" aria-pressed={tool === t.id}
+            onClick={() => onTool(t.id)}
+            title={`${t.label} · ${t.key}`}
+            aria-label={`${t.label} tool, shortcut ${t.key}`}
+          >
+            <t.Icon size={15} />
+          </button>
+        ))}
       </div>
 
-      <div className="cv__band">
-        <div className="cv__faces">
-          {here.map((p) => {
-            const person = trip.people.find((x) => x.id === p.personId);
-            if (!person) return null;
-            const isNew = arriving.includes(p);
-            return (
-              <button
-                key={p.personId}
-                className="cv__face"
-                style={{ ['--c' as string]: person.color }}
-                data-dim={dimPerson !== null && dimPerson !== p.personId ? 'yes' : undefined}
-                data-new={isNew || undefined}
-                title={`${person.name}${isNew ? ' — arrives' : ''} · ${Math.round(p.busyMin / 60)} h booked, ${p.free.length} free ${p.free.length === 1 ? 'gap' : 'gaps'}. Drag onto a card to add them.`}
-                onPointerEnter={() => onHoverPerson(p.personId)}
-                onPointerLeave={() => onHoverPerson(null)}
-                onPointerDown={(e) => { e.preventDefault(); onGrabPerson(p.personId, e); }}
-              >
-                {initials(person.name)}
-                {isNew && <span className="cv__facenew" aria-hidden="true" />}
-              </button>
-            );
-          })}
-          {!here.length && <span className="cv__nobody">nobody here</span>}
-        </div>
+      <span className="bd__sep" role="separator" />
 
-        {col.tracks.filter((t) => t.branchId).map((t) => {
-          const branch = trip.branches.find((b) => b.id === t.branchId);
-          if (!branch) return null;
-          return (
-            <div key={t.id} className="cv__branchtab" style={{ left: t.x, width: t.width, ['--c' as string]: t.color }}>
-              <span className="truncate">{branch.name}</span>
-              <span className="cv__branchn">{branchMembers(trip, branch).length}</span>
-              <button
-                className="cv__branchx" aria-label={`Dissolve ${branch.name} back into the main timeline`}
-                title="Dissolve back into the main timeline"
-                onClick={() => onDeleteBranch(branch.id, true)}
-              >
-                <IconClose size={11} />
-              </button>
-            </div>
-          );
-        })}
-      </div>
+      <button className="btn btn--sm" aria-pressed={shelfOpen} onClick={onShelf}>
+        <IconSearch size={14} /> Places
+      </button>
+      <button className="btn btn--sm" aria-pressed={showFlows} onClick={onFlows} title="Show who goes from what to what">
+        People flows
+      </button>
+
+      <span className="bd__sep" role="separator" />
+
+      <button className="btn btn--sm" onClick={onTidy} title="Lay the board out from the schedule: a frame per day, in time order">
+        Tidy
+      </button>
+      <button className="btn btn--sm btn--primary" onClick={onResolve} title="Read the board and give every framed or wired card a time">
+        <IconSparkle size={14} /> Resolve to timeline
+      </button>
+
+      {selection > 0 && (
+        <>
+          <span className="bd__sep" role="separator" />
+          <span className="bd__count">{selection} selected</span>
+          <button className="btn btn--sm" onClick={onSubTrip}><IconBoard size={14} /> Sub-trip</button>
+          <button className="btn btn--sm" onClick={onPin} aria-pressed={pinned} title="A pinned card keeps its time when the board resolves">
+            <IconLock size={13} /> {pinned ? 'Unpin' : 'Pin time'}
+          </button>
+          <button className="btn btn--sm btn--ghost" onClick={onDelete} aria-label="Delete selected cards">
+            <IconTrash size={13} />
+          </button>
+        </>
+      )}
+
+      <span className="grow" />
+
+      {branches.length > 0 && (
+        <span className="bd__legend">
+          {branches.map((b) => (
+            <button
+              key={b.id} className="bd__legendchip" style={{ ['--c' as string]: b.color }}
+              onClick={() => onFocusBranch(b.id)}
+              title={`Jump to ${b.name}`}
+            >
+              <span className="bd__legenddot" /> {b.name}
+            </button>
+          ))}
+        </span>
+      )}
+
+      <span className="bd__zoom">
+        <button className="btn btn--icon btn--sm btn--ghost" onClick={() => onZoom(1 / 1.25)} aria-label="Zoom out"><IconZoomOut size={14} /></button>
+        <button className="bd__zoomv mono" onClick={onReset} title="Reset to 100%">{Math.round(zoom * 100)}%</button>
+        <button className="btn btn--icon btn--sm btn--ghost" onClick={() => onZoom(1.25)} aria-label="Zoom in"><IconZoomIn size={14} /></button>
+        <button className="btn btn--sm btn--ghost" onClick={onFit}>Fit</button>
+      </span>
     </div>
   );
 }
 
-function NodeCard({
-  node, trip, zone, selected, dim, dropTarget, dragging, issues,
-  onSelect, onGrab, onWire, onHoverPerson,
+function BoardCard({
+  seg, rect, trip, zone, selected, dim, dropTarget, wired, issues, connectMode,
+  onSelect, onGrab, onConnect, onHoverPerson, onTogglePin,
 }: {
-  node: CanvasNode; trip: Trip; zone: string;
-  selected: boolean; dim: boolean; dropTarget: boolean; dragging: boolean;
-  issues: Issue[];
+  seg: Segment; rect: Rect; trip: Trip; zone: string;
+  selected: boolean; dim: boolean; dropTarget: boolean; wired: boolean;
+  issues: Issue[]; connectMode: boolean;
   onSelect: (additive: boolean) => void;
   onGrab: (e: React.PointerEvent) => void;
-  onWire: (e: React.PointerEvent) => void;
+  onConnect: (e: React.PointerEvent) => void;
   onHoverPerson: (id: ID | null) => void;
+  onTogglePin: () => void;
 }) {
-  const seg = node.seg;
   const place = trip.places.find((p) => p.id === (seg.placeId ?? seg.toPlaceId ?? seg.fromPlaceId));
-  const branch = trip.branches.find((b) => b.id === node.branchId);
+  const branch = trip.branches.find((b) => b.id === seg.branchId);
   const worst = issues.some((i) => i.severity === 'error') ? 'error'
     : issues.some((i) => i.severity === 'warning') ? 'warning' : null;
-  const people = node.attendees.map((id) => trip.people.find((p) => p.id === id)).filter(Boolean);
-  const compact = node.h < 62;
-  // Fanned cards get thin. Below these widths the place line and then the
-  // duration cost more than they earn, so they go rather than wrap.
-  const narrow = node.w < 132;
-  const tiny = node.w < 96;
+  const people = attendeesOf(seg, trip).map((id) => trip.people.find((p) => p.id === id)).filter(Boolean);
 
   return (
     <article
-      className="cvn"
-      data-node-key={node.key}
+      className="bdc"
+      data-board-item="card"
+      data-card-id={seg.id}
       data-kind={seg.kind}
       data-selected={selected || undefined}
       data-dim={dim || undefined}
       data-drop={dropTarget || undefined}
-      data-dragging={dragging || undefined}
       data-status={seg.status}
-      data-compact={compact || undefined}
-      data-narrow={narrow || undefined}
+      data-loose={!wired && !seg.pinned ? 'yes' : undefined}
       style={{
-        left: node.x, top: node.y, width: node.w, height: node.h, zIndex: node.z,
+        left: rect.x, top: rect.y, width: rect.w, height: rect.h,
         ...(seg.color ? { ['--c' as string]: seg.color } : null),
         ...(branch ? { ['--bc' as string]: branch.color } : null),
       }}
-      data-branch={branch ? 'yes' : undefined}
       tabIndex={0}
-      aria-label={`${seg.title}, ${fmtTime(seg.start, { zone })} to ${fmtTime(seg.end, { zone })}, ${people.length} people${worst ? `, has a ${worst}` : ''}`}
+      aria-label={`${seg.title}, ${fmtDate(seg.start, zone, 'medium')} ${fmtTime(seg.start, { zone })}, ${people.length} people${worst ? `, has a ${worst}` : ''}`}
       onPointerDown={(e) => {
-        if ((e.target as HTMLElement).closest('.cvn__port')) return;
+        if ((e.target as HTMLElement).closest('.bdc__port, .bdc__pin')) return;
+        e.stopPropagation();
         onSelect(e.shiftKey || e.metaKey || e.ctrlKey);
-        if (!e.shiftKey && !e.metaKey && !e.ctrlKey && e.button === 0) onGrab(e);
+        if (connectMode) { onConnect(e); return; }
+        if (e.button === 0 && !e.shiftKey) onGrab(e);
       }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(e.shiftKey); }
-      }}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(e.shiftKey); } }}
     >
-      <span className="cvn__spine" />
+      <span className="bdc__spine" />
 
-      <header className="cvn__head">
-        <span className="cvn__time mono">
-          {node.continuation ? '↳ ' : ''}{fmtTime(seg.start, { zone })}
-          {!compact && !narrow && <span className="cvn__dur">{fmtDuration(seg.end - seg.start)}</span>}
+      <header className="bdc__head">
+        <span className="bdc__time mono">
+          {fmtDate(seg.start, zone, 'short')} · {fmtTime(seg.start, { zone })}
+          <span className="bdc__dur">{fmtDuration(seg.end - seg.start)}</span>
         </span>
         {worst && (
-          <span className={`cvn__warn cvn__warn--${worst}`} title={issues[0]?.title}>
+          <span className={`bdc__warn bdc__warn--${worst}`} title={issues[0]?.title}>
             <IconWarn size={11} />
           </span>
         )}
+        <button
+          className="bdc__pin" aria-pressed={!!seg.pinned} onClick={onTogglePin}
+          title={seg.pinned ? 'Pinned — resolving will not move it' : 'Pin this time'}
+          aria-label={seg.pinned ? `Unpin ${seg.title}` : `Pin ${seg.title}`}
+        >
+          <IconLock size={11} />
+        </button>
       </header>
 
-      <h4 className="cvn__title">{seg.title}</h4>
+      <h4 className="bdc__title">{seg.title}</h4>
+      <p className="bdc__where">
+        {seg.flight
+          ? `${seg.flight.carrier}${seg.flight.number} · ${seg.flight.fromCode}→${seg.flight.toCode}`
+          : place?.name ?? KIND_LABEL[seg.kind] ?? seg.kind}
+      </p>
 
-      {!compact && !tiny && (
-        <p className="cvn__where">
-          {seg.flight
-            ? `${seg.flight.carrier}${seg.flight.number} · ${seg.flight.fromCode}→${seg.flight.toCode}`
-            : place?.name ?? KIND_LABEL[seg.kind] ?? seg.kind}
-        </p>
-      )}
-
-      <footer className="cvn__foot">
+      <footer className="bdc__foot">
         <span className="avatar-stack">
-          {people.slice(0, 5).map((p) => p && (
+          {people.slice(0, 6).map((p) => p && (
             <span
               key={p.id} className="avatar avatar--sm" style={{ ['--c' as string]: p.color }}
               title={p.name}
@@ -770,148 +936,222 @@ function NodeCard({
               {initials(p.name)}
             </span>
           ))}
-          {people.length > 5 && <span className="avatar avatar--sm cvn__more">+{people.length - 5}</span>}
-          {people.length === 0 && <span className="cvn__nobody">nobody yet</span>}
+          {people.length > 6 && <span className="avatar avatar--sm bdc__more">+{people.length - 6}</span>}
+          {people.length === 0 && <span className="bdc__nobody">nobody yet</span>}
         </span>
-        {seg.status === 'tentative' && <span className="cvn__tent">?</span>}
+        {seg.status === 'tentative' && <span className="bdc__tent" title="Tentative">?</span>}
       </footer>
 
-      {/* the outbound port — drag from here to send these people onward */}
-      <button
-        className="cvn__port"
-        aria-label={`Connect ${seg.title} to what these people do next`}
-        title="Drag to the next thing these people do"
-        onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); onWire(e); }}
-      >
-        <span />
-      </button>
+      {/* four ports, the FigJam gesture: drag one onto another card */}
+      {(['top', 'right', 'bottom', 'left'] as const).map((side) => (
+        <button
+          key={side}
+          className={`bdc__port bdc__port--${side}`}
+          aria-label={`Connect ${seg.title} to what happens next`}
+          title="Drag onto another card — that card then comes after this one"
+          onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); onConnect(e); }}
+        />
+      ))}
     </article>
   );
 }
 
-function EdgeLine({ edge, trip, dim, lit }: { edge: CanvasEdge; trip: Trip; dim: boolean; lit: boolean }) {
-  const width = Math.min(7, 1.4 + edge.personIds.length * 0.75);
-  const stroke = edge.personIds.length === 1
-    ? trip.people.find((p) => p.id === edge.personIds[0])?.color ?? 'var(--line-3)'
-    : 'var(--ink-3)';
+function FrameBox({
+  frame, trip, selected, delta, resizing, onSelect, onGrab, onResize, onRename, onDelete, onDissolveBranch,
+}: {
+  frame: Frame; trip: Trip; selected: boolean;
+  delta: { dx: number; dy: number } | null;
+  resizing: Point | null;
+  onSelect: () => void;
+  onGrab: (e: React.PointerEvent) => void;
+  onResize: (e: React.PointerEvent) => void;
+  onRename: (title: string) => void;
+  onDelete: () => void;
+  onDissolveBranch: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const branch = trip.branches.find((b) => b.id === frame.branchId);
+  const rect: Rect = {
+    x: frame.rect.x + (delta?.dx ?? 0),
+    y: frame.rect.y + (delta?.dy ?? 0),
+    w: resizing ? Math.max(160, resizing.x - frame.rect.x) : frame.rect.w,
+    h: resizing ? Math.max(120, resizing.y - frame.rect.y) : frame.rect.h,
+  };
+  const count = trip.segments.filter((s) => s.at && contains(frame.rect, s.at)).length;
+
   return (
-    <path
-      className="cvw"
-      d={edge.path}
-      stroke={edge.feasible ? stroke : 'var(--danger)'}
-      strokeWidth={lit ? width + 1.4 : width}
-      strokeDasharray={edge.feasible ? undefined : '7 5'}
-      markerEnd="url(#cv-arrow)"
-      data-dim={dim || undefined}
-      data-lit={lit || undefined}
-      data-role={edge.role}
-      fill="none"
-    />
+    <section
+      className="bdf"
+      data-board-item="frame"
+      data-selected={selected || undefined}
+      data-day={frame.dayKey ? 'yes' : undefined}
+      data-branch={branch ? 'yes' : undefined}
+      style={{ ...rectStyle(rect), ...(branch ? { ['--c' as string]: branch.color } : null) }}
+      aria-label={`Frame ${frame.title}, ${count} cards`}
+    >
+      <header
+        className="bdf__bar"
+        onPointerDown={(e) => { e.stopPropagation(); onSelect(); onGrab(e); }}
+        onDoubleClick={() => setEditing(true)}
+      >
+        {editing ? (
+          <input
+            className="bdf__rename" defaultValue={frame.title} autoFocus
+            onPointerDown={(e) => e.stopPropagation()}
+            onBlur={(e) => { onRename(e.target.value); setEditing(false); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { onRename((e.target as HTMLInputElement).value); setEditing(false); }
+              if (e.key === 'Escape') setEditing(false);
+            }}
+          />
+        ) : (
+          <span className="bdf__title truncate">{frame.title}</span>
+        )}
+        <span className="bdf__meta">
+          {frame.dayKey && <span className="bdf__tag">day</span>}
+          {branch && <span className="bdf__tag bdf__tag--branch">{branchMembers(trip, branch).length} away</span>}
+          <span className="bdf__n">{count}</span>
+        </span>
+        {branch ? (
+          <button
+            className="bdf__x" onPointerDown={(e) => e.stopPropagation()} onClick={onDissolveBranch}
+            aria-label={`Dissolve ${branch.name} back into the main timeline`}
+            title="Dissolve back into the main timeline"
+          ><IconClose size={11} /></button>
+        ) : (
+          <button
+            className="bdf__x" onPointerDown={(e) => e.stopPropagation()} onClick={onDelete}
+            aria-label={`Remove the frame ${frame.title}`}
+            title="Remove this frame (the cards stay)"
+          ><IconClose size={11} /></button>
+        )}
+      </header>
+      <button
+        className="bdf__resize" aria-label={`Resize ${frame.title}`}
+        onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); onResize(e); }}
+      />
+    </section>
   );
 }
 
-function EdgeChip({ edge, trip, dim }: { edge: CanvasEdge; trip: Trip; dim: boolean }) {
-  const short = edge.needMin !== undefined ? Math.round(edge.needMin - edge.haveMin) : 0;
+function StickyNote({
+  note, selected, editing, delta, onSelect, onEdit, onCommit, onGrab, onDelete,
+}: {
+  note: Sticky; selected: boolean; editing: boolean;
+  delta: { dx: number; dy: number } | null;
+  onSelect: () => void; onEdit: () => void; onCommit: (text: string) => void;
+  onGrab: (e: React.PointerEvent) => void; onDelete: () => void;
+}) {
+  const rect = stickyRect(note);
   return (
     <div
-      className="cvchip" data-bad={!edge.feasible || undefined} data-dim={dim || undefined}
-      style={{ left: edge.mid.x, top: edge.mid.y }}
+      className="bds"
+      data-board-item="sticky"
+      data-selected={selected || undefined}
+      style={{
+        ...rectStyle({ ...rect, x: rect.x + (delta?.dx ?? 0), y: rect.y + (delta?.dy ?? 0) }),
+        ['--c' as string]: note.color,
+      }}
+      onPointerDown={(e) => {
+        if (editing) return;
+        e.stopPropagation();
+        onSelect();
+        onGrab(e);
+      }}
+      onDoubleClick={onEdit}
     >
-      {!edge.feasible ? (
-        <>
-          <IconWarn size={11} />
-          <span>
-            {edge.distanceKm !== undefined && `${Math.round(edge.distanceKm)} km · `}
-            needs {fmtDuration(edge.needMin! * MIN)}, has {fmtDuration(Math.max(0, edge.haveMin) * MIN)}
-            {short > 0 && ` — short ${fmtDuration(short * MIN)}`}
-          </span>
-        </>
+      {editing ? (
+        <textarea
+          className="bds__edit" defaultValue={note.text} autoFocus
+          onPointerDown={(e) => e.stopPropagation()}
+          onBlur={(e) => onCommit(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Escape') onCommit((e.target as HTMLTextAreaElement).value); }}
+        />
       ) : (
-        <span className="avatar-stack">
-          {edge.personIds.slice(0, 4).map((id) => {
-            const p = trip.people.find((x) => x.id === id);
-            return p ? (
-              <span key={id} className="avatar avatar--sm" style={{ ['--c' as string]: p.color }} title={p.name}>
-                {initials(p.name)}
-              </span>
-            ) : null;
-          })}
-          {edge.personIds.length > 4 && <span className="avatar avatar--sm cvn__more">+{edge.personIds.length - 4}</span>}
-        </span>
+        <p className="bds__text">{note.text || 'Double-click to write'}</p>
+      )}
+      {selected && !editing && (
+        <button className="bds__x" onClick={onDelete} onPointerDown={(e) => e.stopPropagation()} aria-label="Delete note">
+          <IconClose size={11} />
+        </button>
       )}
     </div>
   );
 }
 
-function WireGhost({ drag, model }: { drag: Extract<Drag, { kind: 'wire' }>; model: CanvasModel }) {
-  const from = model.nodeByKey.get(drag.fromKey);
-  if (!from) return null;
-  const a = { x: from.x + from.w / 2, y: from.y + from.h };
-  const dx = Math.max(24, Math.abs(drag.x - a.x) * 0.4);
-  return (
-    <path
-      className="cvw cvw--ghost"
-      d={`M ${a.x} ${a.y} C ${a.x} ${a.y + dx}, ${drag.x} ${drag.y - dx}, ${drag.x} ${drag.y}`}
-      fill="none" stroke="var(--brand)" strokeWidth={2.5} strokeDasharray="6 4"
-      markerEnd="url(#cv-arrow)"
-    />
-  );
-}
-
-function DropGhost({
-  model, drag, options, zone, trip,
+function LinkChip({
+  link, at, trip, zone, selected, onSelect, onToggleKind, onDelete,
 }: {
-  model: CanvasModel; drag: Extract<Drag, { kind: 'node' }>;
-  options: CanvasOptions; zone: string; trip: Trip;
+  link: Link; at: Point; trip: Trip; zone: string; selected: boolean;
+  onSelect: () => void; onToggleKind: () => void; onDelete: () => void;
 }) {
-  if (!drag.over) return null;
-  const node = model.nodeByKey.get(drag.nodeKey);
-  const hit = hitColumn(model, drag.x - drag.grabDx);
-  if (!node || !hit) return null;
-  const duration = node.seg.end - node.seg.start;
-  const top = yFor((drag.over.start - hit.column.dayStart) / MIN, options);
-  const branch = trip.branches.find((b) => b.id === drag.over!.branchId);
+  const from = trip.segments.find((s) => s.id === link.fromId);
+  const to = trip.segments.find((s) => s.id === link.toId);
+  const gap = from && to ? (to.start - from.end) / MIN : 0;
+
   return (
     <div
-      className="cv__ghost"
-      style={{
-        left: hit.column.x + hit.track.x, width: hit.track.width,
-        top, height: Math.max(26, (duration / MIN) * options.pxPerMin),
-      }}
+      className="bdl" data-board-item="link" data-on={selected || undefined}
+      style={{ left: at.x, top: at.y }}
+      onPointerDown={(e) => { e.stopPropagation(); onSelect(); }}
     >
-      <span className="mono">{fmtTime(drag.over.start, { zone })}</span>
-      <span className="cv__ghostday">{fmtDate(drag.over.start, zone, 'weekday')}</span>
-      {branch && <span className="cv__ghostbranch" style={{ ['--c' as string]: branch.color }}>{branch.name}</span>}
+      <button className="bdl__kind" onClick={onToggleKind} title="Switch between a plain 'then' and a journey">
+        {link.kind === 'travel' ? '⇢ travel' : 'then'}
+      </button>
+      {gap !== 0 && (
+        <span className="bdl__gap mono" title={`Gap between them right now, in ${zone}`}>
+          {gap < 0 ? 'overlaps' : fmtDuration(gap * MIN)}
+        </span>
+      )}
+      {selected && (
+        <button className="bdl__x" onClick={onDelete} aria-label="Delete connector"><IconClose size={10} /></button>
+      )}
     </div>
   );
 }
 
-function HourGutter({
-  options, lines, topOffset, scrollRef,
-}: {
-  options: CanvasOptions;
-  lines: ReturnType<typeof hourLines>;
-  topOffset: number;
-  scrollRef: React.RefObject<HTMLDivElement | null>;
-}) {
-  const [scrollTop, setScrollTop] = useState(0);
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const on = () => setScrollTop(el.scrollTop);
-    el.addEventListener('scroll', on, { passive: true });
-    return () => el.removeEventListener('scroll', on);
-  }, [scrollRef]);
-
+function ConnectGhost({ rect, to }: { rect: Rect | undefined; to: Point }) {
+  if (!rect) return null;
+  const from = { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 };
+  const pull = Math.max(30, Math.abs(to.x - from.x) * 0.4);
   return (
-    <div className="cv__gutter" style={{ width: options.gutter, top: topOffset }} aria-hidden="true">
-      <div style={{ transform: `translateY(${-scrollTop}px)`, position: 'relative' }}>
-        {lines.map((l) => (
-          <span className="cv__hour" key={l.hour} data-major={l.major || undefined} style={{ top: l.y }}>
-            {l.label}
-          </span>
-        ))}
-      </div>
+    <path
+      className="bd__wire bd__wire--ghost"
+      d={`M ${from.x} ${from.y} C ${from.x + pull} ${from.y}, ${to.x - pull} ${to.y}, ${to.x} ${to.y}`}
+      fill="none" markerEnd="url(#bd-arrow)"
+    />
+  );
+}
+
+/** The roster is fixed to the viewport, not to the board — it is a palette of
+ *  people you drag onto cards, and it must not sail off when you pan. */
+function Roster({
+  trip, zone, now, dimPerson, onHover, onGrab,
+}: {
+  trip: Trip; zone: string; now: number;
+  dimPerson: ID | null;
+  onHover: (id: ID | null) => void;
+  onGrab: (id: ID, e: React.PointerEvent) => void;
+}) {
+  if (!trip.people.length) return null;
+  return (
+    <div className="bd__roster" aria-label="Travellers — drag onto a card">
+      <span className="bd__rosterlabel">Drag onto a card</span>
+      {trip.people.map((p) => (
+        <button
+          key={p.id}
+          className="bd__face"
+          style={{ ['--c' as string]: p.color }}
+          data-dim={dimPerson !== null && dimPerson !== p.id ? 'yes' : undefined}
+          title={`${p.name} · ${p.homeCity}. Drag onto a card to put them on it.`}
+          onPointerEnter={() => onHover(p.id)}
+          onPointerLeave={() => onHover(null)}
+          onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); onGrab(p.id, e); }}
+        >
+          {initials(p.name)}
+        </button>
+      ))}
+      <span className="bd__rosterday mono">{fmtDate(now, zone, 'short')}</span>
     </div>
   );
 }
@@ -920,20 +1160,18 @@ function BranchDialog({
   trip, draft, onClose, onCreate,
 }: {
   trip: Trip;
-  draft: { name: string; segmentIds: ID[] };
+  draft: { name: string; ids: ID[] };
   onClose: () => void;
   onCreate: (name: string, memberIds: ID[]) => void;
 }) {
-  // Whoever is already on the selected cards is the obvious default — the
-  // planner has usually assigned them before deciding to split the group.
   const suggested = useMemo(() => {
     const set = new Set<ID>();
-    for (const id of draft.segmentIds) {
+    for (const id of draft.ids) {
       const seg = trip.segments.find((s) => s.id === id);
       if (seg) for (const a of attendeesOf(seg, trip)) set.add(a);
     }
     return [...set];
-  }, [draft.segmentIds, trip]);
+  }, [draft.ids, trip]);
 
   const [name, setName] = useState(draft.name);
   const [members, setMembers] = useState<ID[]>(suggested);
@@ -945,8 +1183,9 @@ function BranchDialog({
       <form className="sheet__panel" onSubmit={(e) => { e.preventDefault(); onCreate(name, members); }}>
         <h2 id="branch-h" className="sheet__title">Split off a sub-trip</h2>
         <p className="sheet__lead">
-          {draft.segmentIds.length} {draft.segmentIds.length === 1 ? 'card moves' : 'cards move'} onto their own
-          track. Everyone else carries on down the main line, and both stay on the same canvas.
+          A frame goes round the {draft.ids.length} selected {draft.ids.length === 1 ? 'card' : 'cards'}.
+          Anything you drop into it from now on joins the sub-trip; everyone else carries on down the
+          main line.
         </p>
 
         <label className="field">
@@ -956,11 +1195,11 @@ function BranchDialog({
 
         <fieldset className="field">
           <legend className="field__label">Who goes</legend>
-          <div className="cv__picker">
+          <div className="bd__picker">
             {trip.people.map((p) => {
               const on = members.includes(p.id);
               return (
-                <label key={p.id} className="cv__pick" data-on={on || undefined} style={{ ['--c' as string]: p.color }}>
+                <label key={p.id} className="bd__pick" data-on={on || undefined} style={{ ['--c' as string]: p.color }}>
                   <input
                     type="checkbox" checked={on}
                     onChange={() => setMembers((m) => (on ? m.filter((x) => x !== p.id) : [...m, p.id]))}
@@ -975,7 +1214,7 @@ function BranchDialog({
             {members.length === 0
               ? 'Pick at least one person.'
               : staying.length === 0
-                ? 'Everyone is going — that is just the main timeline. Leave someone behind, or cancel.'
+                ? 'Everyone is going — that is just the main plan. Leave someone behind, or cancel.'
                 : `${members.length} peel off, ${staying.length} stay: ${staying.map((p) => p.name.split(' ')[0]).join(', ')}.`}
           </span>
         </fieldset>
@@ -991,17 +1230,27 @@ function BranchDialog({
   );
 }
 
-function CanvasEmpty({ onCreate }: { onCreate: () => void }) {
+function BoardEmpty({
+  hasSegments, onTidy, onAdd,
+}: {
+  hasSegments: boolean; onTidy: () => void; onAdd: () => void;
+}) {
   return (
-    <div className="empty">
-      <p className="empty__title">An empty board</p>
+    <div className="empty bd__empty">
+      <p className="empty__title">A blank board</p>
       <p className="empty__body">
-        Days run across, hours run down. Add the people first — the roster along the top is what
-        you drag onto cards to say who is doing what — then drop the first block on a day.
+        {hasSegments
+          ? 'This trip already has a plan but nothing has been put on the board yet. Tidy lays it out for you — a frame per day, in time order — and you can rearrange it however you like from there.'
+          : 'Drop cards anywhere, wire them together in the order they happen, and put the ones that share a day inside a frame. When the shape is right, Resolve turns it into a schedule.'}
       </p>
       <div className="row" style={{ gap: 'var(--s-2)', justifyContent: 'center' }}>
-        <button className="btn btn--primary" onClick={onCreate}>
-          <IconSparkle size={15} /> Put something on day one
+        {hasSegments && (
+          <button className="btn btn--primary" onClick={onTidy}>
+            <IconSparkle size={15} /> Lay out the existing plan
+          </button>
+        )}
+        <button className={`btn ${hasSegments ? '' : 'btn--primary'}`} onClick={onAdd}>
+          <IconPlus size={15} /> Add the first card
         </button>
       </div>
     </div>
@@ -1010,7 +1259,11 @@ function CanvasEmpty({ onCreate }: { onCreate: () => void }) {
 
 /* ---------- odds and ends ---------- */
 
-function kindForPlace(place: Place): Segment['kind'] {
+function rectStyle(r: Rect) {
+  return { left: r.x, top: r.y, width: r.w, height: r.h };
+}
+
+export function kindForPlace(place: Place): Segment['kind'] {
   switch (place.kind) {
     case 'restaurant': return 'meal';
     case 'bar': return 'activity';
@@ -1021,14 +1274,4 @@ function kindForPlace(place: Place): Segment['kind'] {
   }
 }
 
-/** Nudge the scroller when a drag reaches its edge. */
-function autoScroll(el: HTMLElement | null, clientX: number, clientY: number) {
-  if (!el) return;
-  const r = el.getBoundingClientRect();
-  const EDGE = 56;
-  const speed = 14;
-  if (clientX > r.right - EDGE) el.scrollLeft += speed;
-  else if (clientX < r.left + EDGE) el.scrollLeft -= speed;
-  if (clientY > r.bottom - EDGE) el.scrollTop += speed;
-  else if (clientY < r.top + EDGE) el.scrollTop -= speed;
-}
+export { CARD_W, CARD_H, STICKY_W, STICKY_H };

@@ -16,7 +16,11 @@ import { reducer, initialState } from '../src/core/store';
 import { packColumns } from '../src/core/layout';
 import { guessZone, isShortMapLink, isValidZone, parseMapLink, searchBuiltin } from '../src/core/geo';
 import { branchDepth, branchMembers, childBranches, mainSegments, segmentsInBranch, spanOf } from '../src/core/branch';
-import { DEFAULT_CANVAS, buildCanvas, hitColumn, timeAt, yFor } from '../src/core/canvas';
+import {
+  CARD_H, CARD_W, cardRect, cardsIn, connector, contentBounds, fitTo, frameAt, isScheduled,
+  layoutFromSchedule, normalise, peopleFlows, sidesFor, toScreen, toWorld, zoomAt,
+} from '../src/core/board';
+import { DEFAULT_RESOLVE, resolveBoard, topoOrder } from '../src/core/resolve';
 import { makeBranch, migrate, reidentify } from '../src/core/library';
 import { dateKeyToEpoch } from '../src/core/time';
 import type { Trip } from '../src/core/types';
@@ -492,88 +496,247 @@ const minusOne = reducer(initialState(withBranch), { type: 'person/delete', id: 
 ok('a removed person leaves no trace in a branch',
    minusOne.present.branches.every((b) => !b.memberIds.includes(beachPeople[0])));
 
-/* ============ canvas geometry ============ */
+/* ============ board geometry ============ */
 
-const canvasZone = IST;
-const canvasDays = eachDay(
-  Math.min(...trip.segments.map((s) => s.start)),
-  Math.max(...trip.segments.map((s) => s.end)),
-  canvasZone,
-);
-const canvasOpts = { ...DEFAULT_CANVAS, zone: canvasZone, days: canvasDays };
-const model = buildCanvas(withBranch, withBranch.segments, canvasOpts);
+/* Screen and world are inverses of one another; every drop position depends on
+   it, so it is asserted at an awkward zoom rather than at 1. */
+const vp = { x: -120, y: 240, zoom: 0.63 };
+const roundTrip = toScreen(vp, toWorld(vp, 317, 209));
+ok('screen → world → screen is the identity',
+   Math.abs(roundTrip.x - 317) < 0.001 && Math.abs(roundTrip.y - 209) < 0.001,
+   JSON.stringify(roundTrip));
 
-eq('one column per day', model.columns.length, canvasDays.length);
-ok('columns never overlap',
-   model.columns.every((c, i) => i === 0 || c.x >= model.columns[i - 1].x + model.columns[i - 1].width));
-ok('a day the group splits carries an extra track',
-   model.columns.some((c) => c.tracks.length > 1));
-ok('every branch segment lands on its own branch track',
-   model.nodes.filter((n) => n.branchId).every((n) => n.trackId === n.branchId));
-ok('every node sits inside its column',
-   model.nodes.every((n) => {
-     const col = model.columns.find((c) => c.dayKey === n.dayKey)!;
-     return n.x >= col.x - 0.5 && n.x + n.w <= col.x + col.width + 0.5;
+/* Zooming about a point must leave that point where it was, or the board
+   crawls away from the cursor as you scroll. */
+const zoomed = zoomAt(vp, 400, 300, 1.4);
+const anchorBefore = toWorld(vp, 400, 300);
+const anchorAfter = toWorld(zoomed, 400, 300);
+ok('zooming holds the point under the cursor',
+   Math.abs(anchorBefore.x - anchorAfter.x) < 0.001 && Math.abs(anchorBefore.y - anchorAfter.y) < 0.001);
+ok('and it actually zoomed', zoomed.zoom > vp.zoom);
+ok('zoom is clamped at the top', zoomAt(vp, 0, 0, 10_000).zoom <= 3);
+ok('and at the bottom', zoomAt(vp, 0, 0, 0.00001).zoom >= 0.12);
+
+const fitted = fitTo({ x: 100, y: 100, w: 800, h: 400 }, 1000, 700);
+const fitCentre = toWorld(fitted, 500, 350);
+ok('fitting centres the content', Math.abs(fitCentre.x - 500) < 1 && Math.abs(fitCentre.y - 300) < 1,
+   JSON.stringify(fitCentre));
+
+eq('a drag rectangle drawn backwards still normalises',
+   normalise({ x: 90, y: 80 }, { x: 10, y: 20 }), { x: 10, y: 20, w: 80, h: 60 });
+
+/* Connectors leave the side that faces the other card. */
+const left = { x: 0, y: 0, w: CARD_W, h: CARD_H };
+eq('a card to the right is joined side to side',
+   sidesFor(left, { x: 600, y: 10, w: CARD_W, h: CARD_H }), { from: 'right', to: 'left' });
+eq('a card below is joined top to bottom',
+   sidesFor(left, { x: 10, y: 600, w: CARD_W, h: CARD_H }), { from: 'bottom', to: 'top' });
+eq('and a card above, the other way round',
+   sidesFor(left, { x: 10, y: -600, w: CARD_W, h: CARD_H }), { from: 'top', to: 'bottom' });
+const wire = connector(left, { x: 600, y: 0, w: CARD_W, h: CARD_H });
+ok('a connector is a single cubic', /^M [\d.-]+ [\d.-]+ C /.test(wire.path));
+ok('it starts on the right edge of the first card', Math.abs(wire.start.x - CARD_W) < 0.01);
+ok('and ends on the left edge of the second', Math.abs(wire.end.x - 600) < 0.01);
+ok('its label sits between the two', wire.mid.x > CARD_W && wire.mid.x < 600);
+
+/* ============ laying the schedule out on the board ============ */
+
+const laid = layoutFromSchedule(trip, IST);
+eq('every live card gets a position',
+   laid.positions.size, trip.segments.filter((s) => s.status !== 'cancelled').length);
+ok('a frame is made for every day', laid.frames.length > 0);
+ok('every frame is a day frame', laid.frames.every((f) => !!f.dayKey));
+ok('day frames do not overlap horizontally',
+   laid.frames.every((f, i) => i === 0 || f.rect.x >= laid.frames[i - 1].rect.x + laid.frames[i - 1].rect.w));
+
+const boarded: Trip = {
+  ...trip,
+  frames: laid.frames,
+  segments: trip.segments.map((s) => ({ ...s, at: laid.positions.get(s.id) ?? s.at })),
+};
+ok('every card lands inside the frame for its own day',
+   boarded.segments
+     .filter((s) => s.status !== 'cancelled' && s.at)
+     .every((s) => {
+       const day = dateKey(s.start, IST);
+       const f = boarded.frames.find((x) => x.dayKey === day);
+       return !!f && s.at!.x >= f.rect.x && s.at!.x <= f.rect.x + f.rect.w;
+     }));
+eq('and the frame it reports being in agrees',
+   frameAt(boarded, { x: boarded.segments[0].at!.x + 1, y: boarded.segments[0].at!.y + 1 })?.dayKey,
+   dateKey(boarded.segments[0].start, IST));
+
+/* Stacking, not clock arithmetic: two cards in one lane must never overlap,
+   whatever their times. Rounding a y from the hour used to collide them. */
+const laneOverlap = (() => {
+  const byLane = new Map<string, { y: number; h: number }[]>();
+  for (const seg of boarded.segments) {
+    if (!seg.at || seg.status === 'cancelled') continue;
+    const key = `${Math.round(seg.at.x)}`;
+    byLane.set(key, [...(byLane.get(key) ?? []), { y: seg.at.y, h: CARD_H }]);
+  }
+  for (const list of byLane.values()) {
+    const sorted = [...list].sort((a, b) => a.y - b.y);
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i].y < sorted[i - 1].y + sorted[i - 1].h) return true;
+    }
+  }
+  return false;
+})();
+ok('no two cards in a lane are laid out on top of each other', !laneOverlap);
+
+const bounds = contentBounds(boarded);
+ok('content bounds cover every card',
+   boarded.segments.filter((s) => s.at).every((s) => {
+     const r = cardRect(s);
+     return r.x >= bounds.x && r.x + r.w <= bounds.x + bounds.w;
    }));
-ok('no node is drawn too small to read', model.nodes.every((n) => n.h >= 26));
 
-/* y and time are inverses of one another, which is what makes dragging a card
-   the same act as rescheduling it. */
-const probeDay = dateKeyToEpoch(canvasDays[0], canvasZone);
-const probeAt = probeDay + 14 * HOUR + 20 * MIN;
-const probeY = yFor((probeAt - probeDay) / MIN, canvasOpts);
-eq('a time maps to a height and back', Math.round(timeAt(probeY, probeDay, canvasOpts)), probeAt);
+const marquee = cardsIn(boarded, { x: bounds.x, y: bounds.y, w: 1, h: 1 });
+ok('a one-pixel marquee catches almost nothing', marquee.length <= 2);
+ok('a marquee over everything catches everything',
+   cardsIn(boarded, bounds).length === boarded.segments.filter((s) => s.at).length);
 
-ok('edges only ever join two real nodes',
-   model.edges.every((e) => model.nodeByKey.has(e.fromKey) && model.nodeByKey.has(e.toKey)));
-ok('an edge carries at least one person', model.edges.every((e) => e.personIds.length > 0));
-ok('people making the same hop share one edge',
-   model.edges.length <= withBranch.people.length * withBranch.segments.length);
-ok('some edge bundles more than one person', model.edges.some((e) => e.personIds.length > 1));
-ok('an infeasible hop is marked as such',
-   model.edges.filter((e) => !e.feasible).every((e) => e.needMin !== undefined && e.haveMin < e.needMin));
+const flowRects = new Map(boarded.segments.filter((s) => s.at).map((s) => [s.id, cardRect(s)]));
+const boardFlows = peopleFlows(boarded, flowRects);
+ok('people flows are derived on the board too', boardFlows.length > 0);
+ok('and they still bundle', boardFlows.some((f) => f.personIds.length > 1));
 
-const presentDays = model.presence.filter((p) => p.present);
-ok('presence is computed for someone', presentDays.length > 0);
+/* ============ resolving the board to a timeline ============ */
 
-/* An empty board still has to show a roster, or there is nothing to drag. */
-const rosterOnly = buildCanvas(
-  { ...trip, segments: [], branches: [] },
-  [],
-  { ...DEFAULT_CANVAS, zone: canvasZone, days: canvasDays.slice(0, 3) },
-);
-eq('everyone shows up on an empty board',
-   rosterOnly.presence.filter((p) => p.present && p.dayKey === canvasDays[0]).length,
-   trip.people.length);
-ok('and none of them is shown as busy',
-   rosterOnly.presence.every((p) => p.busyMin === 0));
-
-/* Someone who has said when they can come is absent outside that window. */
-const lateArrival = buildCanvas(
+const cyc = topoOrder(
+  ['a', 'b', 'c'],
   {
-    ...trip, segments: [], branches: [],
-    people: trip.people.map((p, i) =>
-      i === 0 ? { ...p, windowStart: dateKeyToEpoch(canvasDays[2], canvasZone) } : p),
+    incoming: new Map([['b', [{ id: 'l1', fromId: 'a', toId: 'b', kind: 'then' as const }]],
+                       ['a', [{ id: 'l2', fromId: 'b', toId: 'a', kind: 'then' as const }]]]),
+    outgoing: new Map([['a', [{ id: 'l1', fromId: 'a', toId: 'b', kind: 'then' as const }]],
+                       ['b', [{ id: 'l2', fromId: 'b', toId: 'a', kind: 'then' as const }]]]),
   },
-  [],
-  { ...DEFAULT_CANVAS, zone: canvasZone, days: canvasDays.slice(0, 3) },
+  () => 0,
 );
-const latecomer = trip.people[0].id;
-ok('a declared window keeps someone off the days before it',
-   !lateArrival.presence.find((p) => p.personId === latecomer && p.dayKey === canvasDays[0])?.present);
-ok('and puts them on the day it starts',
-   !!lateArrival.presence.find((p) => p.personId === latecomer && p.dayKey === canvasDays[2])?.present);
-ok('free windows never run backwards',
-   model.presence.every((p) => p.free.every((f) => f.toMin > f.fromMin)));
-ok('free windows sit inside the drawn day',
-   model.presence.every((p) => p.free.every((f) => f.fromMin >= canvasOpts.hourStart * 60 && f.toMin <= canvasOpts.hourEnd * 60)));
+eq('a two-node loop is caught', cyc.cycle.sort(), ['a', 'b']);
+eq('and the node outside it still resolves', cyc.order, ['c']);
 
-/* Hit-testing is the inverse of column layout — a drop has to land where the
-   card was drawn. */
-const midCol = model.columns[1];
-const hit = hitColumn(model, midCol.x + 4);
-eq('a point inside a column finds it', hit?.column.dayKey, midCol.dayKey);
-ok('a point past the last column finds nothing', hitColumn(model, model.width + 500) === null);
+/** A tiny hand-built board: three cards, one frame, one connector. */
+function boardFixture(over: Partial<Trip> = {}): Trip {
+  const base = trip.segments[0];
+  const card = (id: string, at: { x: number; y: number }, start: string, mins: number): Segment => ({
+    ...base, id, title: id, kind: 'activity', at, pinned: undefined,
+    placeId: undefined, fromPlaceId: undefined, toPlaceId: undefined,
+    everyone: undefined, attendeeIds: [],
+    start: parseLocal('2026-09-23', start, IST),
+    end: parseLocal('2026-09-23', start, IST) + mins * MIN,
+  });
+  return {
+    ...trip,
+    links: [],
+    stickies: [],
+    frames: [{ id: 'f1', title: 'Day 1', rect: { x: 0, y: 0, w: 600, h: 900 }, color: '#fff', dayKey: '2026-09-25' }],
+    segments: [
+      card('top', { x: 40, y: 40 }, '09:00', 60),
+      card('middle', { x: 40, y: 300 }, '08:00', 90),
+      card('outside', { x: 2000, y: 40 }, '07:00', 60),
+    ],
+    ...over,
+  };
+}
+
+const framed = resolveBoard(boardFixture());
+eq('only the framed cards are scheduled', framed.considered, 2);
+const topMove = framed.moves.find((m) => m.id === 'top');
+const midMove = framed.moves.find((m) => m.id === 'middle');
+ok('a framed card moves to the frame’s day',
+   !!topMove && dateKey(topMove.to, IST) === '2026-09-25');
+ok('a card outside every frame is left alone',
+   !framed.moves.some((m) => m.id === 'outside'));
+
+/* The two cards in the fixture are stacked in one column but their times run
+   the other way, so resolving deals the same two times back out in the order
+   they now sit. Nothing is invented; they simply swap. */
+eq('the card on top takes the earlier of the two times', toParts(topMove!.to, IST).hour, 8);
+eq('and the one below takes the later', toParts(midMove!.to, IST).hour, 9);
+ok('which puts them in the order the board shows', topMove!.to < midMove!.to);
+
+/* The frame sets the date and nothing else: 14:20 stays 14:20. */
+const timeKept = resolveBoard(boardFixture({
+  segments: boardFixture().segments.map((s) =>
+    s.id === 'top'
+      ? { ...s, at: { x: 40, y: 40 }, start: parseLocal('2026-09-23', '14:20', IST), end: parseLocal('2026-09-23', '15:20', IST) }
+      : { ...s, at: { x: 900, y: 40 } }),
+}));
+const kept = timeKept.moves.find((m) => m.id === 'top')!;
+eq('moving a card to another day keeps its time of day', fmtTime(kept.to, { zone: IST }), '14:20');
+eq('and only the date changes', dateKey(kept.to, IST), '2026-09-25');
+
+/* Side by side means at the same time, so nothing is sequenced between them. */
+const parallel = resolveBoard(boardFixture({
+  segments: boardFixture().segments.map((s) =>
+    s.id === 'middle' ? { ...s, at: { x: 320, y: 40 } } : s),
+}));
+const pTop = parallel.moves.find((m) => m.id === 'top')!;
+const pMid = parallel.moves.find((m) => m.id === 'middle')!;
+eq('a card beside another keeps its own hour', toParts(pTop.to, IST).hour, 9);
+eq('and so does the one next to it', toParts(pMid.to, IST).hour, 8);
+
+/* Resolving a board that already agrees with itself must do nothing at all —
+   this is what stops it from flattening a plan somebody timed by hand. */
+const settled = {
+  ...boardFixture(),
+  frames: [{ id: 'f1', title: 'Day 1', rect: { x: 0, y: 0, w: 600, h: 900 }, color: '#fff', dayKey: '2026-09-23' }],
+  segments: boardFixture().segments.map((s) =>
+    s.id === 'top' ? { ...s, start: parseLocal('2026-09-23', '08:00', IST), end: parseLocal('2026-09-23', '09:00', IST) }
+      : s.id === 'middle' ? { ...s, start: parseLocal('2026-09-23', '11:00', IST), end: parseLocal('2026-09-23', '12:30', IST) }
+        : s),
+} as Trip;
+eq('a board that already agrees with itself resolves to no change',
+   resolveBoard(settled).moves.length, 0);
+
+/* And a real double-booking in a column is pushed apart, not left overlapping. */
+const overlapping = {
+  ...settled,
+  segments: settled.segments.map((s) =>
+    s.id === 'middle'
+      ? { ...s, start: parseLocal('2026-09-23', '08:30', IST), end: parseLocal('2026-09-23', '09:30', IST) }
+      : s),
+} as Trip;
+const pushed = resolveBoard(overlapping).moves.find((m) => m.id === 'middle');
+ok('a card stacked under another is pushed clear of it',
+   !!pushed && pushed.to >= parseLocal('2026-09-23', '09:00', IST));
+
+/* A connector is a hard "after", and a travel connector costs the journey. */
+const linkedBoard = boardFixture({
+  links: [{ id: 'l1', fromId: 'middle', toId: 'outside', kind: 'then', bufferMin: 45 }],
+});
+const chained = resolveBoard(linkedBoard);
+const mid2 = chained.moves.find((m) => m.id === 'middle');
+const out2 = chained.moves.find((m) => m.id === 'outside');
+ok('a linked card is scheduled even with no frame', !!out2);
+ok('and it lands after its predecessor finishes, plus the buffer',
+   !!out2 && !!mid2 && out2.to >= mid2.to + 90 * MIN + 45 * MIN);
+
+/* A pin outranks everything, and says so when its own inputs disagree. */
+const pinnedBoard = boardFixture({
+  links: [{ id: 'l1', fromId: 'middle', toId: 'outside', kind: 'then' }],
+  segments: boardFixture().segments.map((s) =>
+    s.id === 'outside' ? { ...s, pinned: true } : s),
+});
+const withPin = resolveBoard(pinnedBoard);
+ok('a pinned card is never moved', !withPin.moves.some((m) => m.id === 'outside'));
+ok('and a pin its own inputs contradict is reported',
+   withPin.issues.some((i) => i.code === 'link-backwards'),
+   withPin.issues.map((i) => i.code).join(','));
+
+/* A board nobody has framed or wired schedules nothing at all — resolving must
+   never scramble a plan somebody already timed by hand. */
+const loose = resolveBoard({ ...boardFixture(), frames: [] });
+eq('a loose board resolves nothing', loose.considered, 0);
+eq('and moves nothing', loose.moves.length, 0);
+
+ok('isScheduled agrees with what resolve would touch',
+   boardFixture().segments.filter((s) => isScheduled(boardFixture(), s)).length === 2);
+
+ok('every journey gets some slack by default', DEFAULT_RESOLVE.bufferMin > 0);
+
 
 /* ============ the library ============ */
 
