@@ -1,0 +1,142 @@
+/** Roster: who is coming, when they land, where they sleep, what they like. */
+
+import { useMemo } from 'react';
+import type { ClockMode, ID, Trip } from '../core/types';
+import { DAY, MIN, dateKey, eachDay, fmtDate, fmtDuration, fmtTime, zoneAbbr, zoneCity } from '../core/time';
+import { bookendsFor, segmentsFor } from '../core/schedule';
+import { axisZone } from '../core/clock';
+import { initials } from './SegmentChrome';
+
+export function PeopleView({
+  trip, clock, onFocusPerson, onExport, onOpenPerson, focusPersonId,
+}: {
+  trip: Trip; clock: ClockMode; focusPersonId: ID | null;
+  onFocusPerson: (id: ID | null) => void;
+  onExport: (id: ID) => void;
+  onOpenPerson: (id: ID) => void;
+}) {
+  const zone = axisZone(clock, trip);
+
+  const days = useMemo(() => {
+    if (!trip.segments.length) return [];
+    const lo = Math.min(...trip.segments.map((s) => s.start));
+    const hi = Math.max(...trip.segments.map((s) => s.end));
+    return eachDay(lo, hi, zone);
+  }, [trip.segments, zone]);
+
+  return (
+    <div className="people">
+      {trip.people.map((person) => {
+        const segs = segmentsFor(person.id, trip);
+        const { arrival, departure } = bookendsFor(person.id, trip);
+        const hotel = trip.groups.find((g) => g.kind === 'hotel' && g.memberIds.includes(person.id));
+        const track = trip.groups.find((g) => g.kind === 'track' && g.memberIds.includes(person.id));
+        const hotelPlace = trip.places.find((p) => p.id === hotel?.placeId);
+        const busyByDay = days.map((k) => {
+          const mins = segs
+            .filter((s) => dateKey(s.start, zone) === k && s.kind !== 'rest')
+            .reduce((a, s) => a + Math.min(s.end, s.start + DAY) - s.start, 0) / MIN;
+          return { key: k, mins };
+        });
+        const maxMins = Math.max(60, ...busyByDay.map((d) => d.mins));
+        const offset = zoneAbbr(Date.now(), person.homeTimezone);
+        const isFocused = focusPersonId === person.id;
+
+        return (
+          <article className="panel pcard" key={person.id} aria-labelledby={`p-${person.id}`}>
+            <header className="pcard__head">
+              <span className="avatar avatar--lg" style={{ ['--c' as string]: person.color }} aria-hidden="true">
+                {initials(person.name)}
+              </span>
+              <div className="grow">
+                <h3 className="pcard__name" id={`p-${person.id}`}>{person.name}</h3>
+                <p className="pcard__meta">
+                  {person.homeCity} · {zoneCity(person.homeTimezone)} ({offset})
+                </p>
+              </div>
+              <div className="row" style={{ gap: 4 }}>
+                {track && <span className="chip" style={{ color: track.color, borderColor: track.color }}>{track.name.split(' · ')[0]}</span>}
+              </div>
+            </header>
+
+            <dl className="pcard__grid">
+              <dt>Arrives</dt>
+              <dd>
+                {arrival ? (
+                  <>
+                    <span className="mono">{fmtDate(arrival.end, zone, 'medium')} {fmtTime(arrival.end, { zone })}</span>
+                    {' '}<span style={{ color: 'var(--ink-3)' }}>{arrival.flight ? `${arrival.flight.carrier}${arrival.flight.number}` : ''}</span>
+                  </>
+                ) : <span style={{ color: 'var(--ink-3)' }}>Not set</span>}
+              </dd>
+
+              <dt>Leaves</dt>
+              <dd>
+                {departure ? (
+                  <>
+                    <span className="mono">{fmtDate(departure.start, zone, 'medium')} {fmtTime(departure.start, { zone })}</span>
+                    {' '}<span style={{ color: 'var(--ink-3)' }}>{departure.flight ? `${departure.flight.carrier}${departure.flight.number}` : ''}</span>
+                  </>
+                ) : <span style={{ color: 'var(--ink-3)' }}>Not set</span>}
+              </dd>
+
+              <dt>Hotel</dt>
+              <dd>{hotelPlace?.name ?? hotel?.name ?? '—'}</dd>
+
+              <dt>Likes</dt>
+              <dd>{person.interests.join(', ') || '—'}</dd>
+
+              {person.dietary && (<><dt>Diet</dt><dd>{person.dietary}</dd></>)}
+            </dl>
+
+            <div>
+              <p className="label" style={{ marginBottom: 4 }}>Daily load</p>
+              <div className="pcard__bar" role="img"
+                aria-label={busyByDay.map((d) => `${d.key}: ${Math.round(d.mins / 60)} hours`).join('; ')}>
+                {busyByDay.map((d) => (
+                  <span
+                    key={d.key}
+                    style={{
+                      flex: 1,
+                      background: d.mins === 0 ? 'transparent'
+                        : `color-mix(in oklab, ${person.color} ${Math.round(30 + (d.mins / maxMins) * 70)}%, transparent)`,
+                      borderRight: '1px solid var(--bg-1)',
+                    }}
+                    title={`${d.key}: ${fmtDuration(d.mins * MIN)}`}
+                  />
+                ))}
+              </div>
+              <p className="pcard__meta" style={{ marginTop: 4 }}>
+                {segs.length} items · {fmtDuration(segs.reduce((a, s) => a + (s.end - s.start), 0))} total
+              </p>
+            </div>
+
+            <div className="row" style={{ flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn btn--sm"
+                aria-pressed={isFocused}
+                onClick={() => onFocusPerson(isFocused ? null : person.id)}
+              >
+                {isFocused ? 'Showing only them' : 'Focus on them'}
+              </button>
+              <button type="button" className="btn btn--sm" onClick={() => onOpenPerson(person.id)}>
+                Their timeline
+              </button>
+              <button type="button" className="btn btn--sm" onClick={() => onExport(person.id)}>
+                Calendar file
+              </button>
+            </div>
+          </article>
+        );
+      })}
+
+      {trip.people.length === 0 && (
+        <div className="empty">
+          <p className="empty__title">No one on the trip yet</p>
+          <p className="empty__body">Add travellers from the left rail, then assign them to blocks.</p>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,612 @@
+/* ============================================================
+   Views: timeline, day grid, agenda, map, people, board
+   ============================================================ */
+
+/* ---------- segment chrome, shared by every view ---------- */
+
+.seg {
+  --c: var(--k-note);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  padding: var(--s-1) var(--s-2) var(--s-1) calc(var(--s-2) + 2px);
+  border-radius: var(--r-2);
+  background:
+    linear-gradient(180deg,
+      color-mix(in oklab, var(--c) 26%, var(--bg-2)),
+      color-mix(in oklab, var(--c) 15%, var(--bg-2)));
+  border: 1px solid color-mix(in oklab, var(--c) 42%, transparent);
+  color: var(--ink-1);
+  text-align: left;
+  overflow: hidden;
+  isolation: isolate;
+  transition: box-shadow var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out),
+              border-color var(--dur-1) var(--ease-out), filter var(--dur-1) var(--ease-out);
+}
+/* Every child keeps its natural height. A flex item that is allowed to shrink
+   below its line box paints its glyphs over the row beneath it and outside the
+   block — which is exactly the overlap this replaced. */
+.seg > * { flex: 0 0 auto; min-height: 0; }
+
+.seg::before {                       /* the kind's colour bar — never the only cue */
+  content: ''; position: absolute; inset: 0 auto 0 0; width: 3px;
+  background: var(--c); border-radius: var(--r-2) 0 0 var(--r-2);
+}
+.seg:hover { border-color: color-mix(in oklab, var(--c) 72%, transparent); box-shadow: var(--shadow-2); }
+.seg:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; z-index: 6; }
+.seg[aria-selected='true'] {
+  border-color: var(--c);
+  box-shadow: 0 0 0 1px var(--c), var(--shadow-2);
+  z-index: 5;
+}
+.seg[data-status='tentative'] {
+  background:
+    repeating-linear-gradient(135deg,
+      color-mix(in oklab, var(--c) 20%, var(--bg-2)) 0 7px,
+      color-mix(in oklab, var(--c) 9%, var(--bg-2)) 7px 14px);
+  border-style: dashed;
+}
+.seg[data-status='cancelled'] { opacity: 0.5; }
+.seg[data-status='cancelled'] .seg__title { text-decoration: line-through; }
+.seg[data-conflict='true'] {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 1px var(--danger), 0 0 22px -6px var(--danger);
+}
+.seg[data-dim='true'] { filter: saturate(0.25) opacity(0.42); }
+
+/* one row of content: icon, title, then whatever detail still fits */
+.seg__line {
+  display: flex; align-items: center; gap: var(--s-1);
+  min-width: 0; width: 100%;
+  font-size: var(--step--1); font-weight: 620; line-height: 1.25;
+  letter-spacing: -0.008em;
+}
+.seg__title {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Detail gives way before the title does: the place goes first, then the
+   clock, so a shrinking block loses context before it loses its name. */
+.seg__where {
+  min-width: 0; flex: 0 1 auto;
+  font-weight: 500; color: var(--ink-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.seg__time {
+  flex: none;
+  font-size: var(--step--2); font-weight: 600; color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.seg__meta {
+  display: flex; align-items: center; gap: var(--s-1);
+  min-width: 0; width: 100%;
+  font-size: var(--step--2); line-height: 1.3; color: var(--ink-2);
+  overflow: hidden; white-space: nowrap;
+}
+.seg__icon { flex: none; font-size: 0.85em; opacity: 0.9; }
+.seg__icon--solo {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; height: 100%; font-size: 0.72rem; opacity: 0.95;
+}
+.seg__badges { display: flex; gap: 3px; flex: none; margin-left: auto; padding-left: 3px; }
+.seg__lock, .seg__warn { font-size: 0.7rem; line-height: 1; }
+.seg__warn { color: var(--danger-ink); }
+
+/* drag handles on the two edges */
+.seg__grip {
+  position: absolute; top: 0; bottom: 0; width: 9px;
+  cursor: ew-resize; z-index: 3;
+  background: transparent;
+}
+.seg__grip:hover::after, .seg__grip:focus-visible::after {
+  content: ''; position: absolute; inset: 18% 3px;
+  border-radius: var(--r-full); background: var(--c);
+}
+.seg__grip--start { left: 0; } .seg__grip--end { right: 0; }
+.seg--vertical .seg__grip { inset: auto 0 auto 0; height: 9px; width: auto; cursor: ns-resize; }
+.seg--vertical .seg__grip--start { top: 0; } .seg--vertical .seg__grip--end { bottom: 0; top: auto; }
+.seg--vertical .seg__grip:hover::after { inset: 3px 32%; }
+@media (pointer: coarse) { .seg__grip { width: 16px; } .seg--vertical .seg__grip { height: 16px; } }
+
+.seg.is-dragging { box-shadow: var(--shadow-drag); z-index: 30; cursor: grabbing; }
+.seg.is-ghost { opacity: 0.32; }
+
+/* ---------- kind colour binding ---------- */
+[data-kind='flight']   { --c: var(--k-flight); }
+[data-kind='transfer'] { --c: var(--k-transfer); }
+[data-kind='checkin']  { --c: var(--k-checkin); }
+[data-kind='checkout'] { --c: var(--k-checkout); }
+[data-kind='session']  { --c: var(--k-session); }
+[data-kind='workshop'] { --c: var(--k-workshop); }
+[data-kind='meal']     { --c: var(--k-meal); }
+[data-kind='activity'] { --c: var(--k-activity); }
+[data-kind='free']     { --c: var(--k-free); }
+[data-kind='rest']     { --c: var(--k-rest); }
+[data-kind='buffer']   { --c: var(--k-buffer); }
+[data-kind='note']     { --c: var(--k-note); }
+
+/* ============================================================
+   TIMELINE — horizontal, lane-per-person/group/place
+   ============================================================ */
+
+.tl { position: relative; height: 100%; overflow: auto; overscroll-behavior: contain; scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { .tl { scroll-behavior: auto; } }
+
+.tl__head {
+  position: sticky; top: 0; z-index: 20;
+  display: flex;
+  background: color-mix(in oklab, var(--bg-1) 92%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line-2);
+}
+.tl__corner {
+  position: sticky; left: 0; z-index: 22; flex: none;
+  width: var(--lane-w); height: 100%;
+  border-right: 1px solid var(--line-2);
+  background: var(--bg-1);
+  display: grid; align-content: center; gap: 1px;
+  padding: var(--s-2) var(--s-3);
+}
+.tl__ruler { position: relative; height: 3.6rem; flex: none; }
+
+.tl__day {
+  position: absolute; top: 0; height: 1.7rem;
+  display: flex; align-items: center; gap: var(--s-2);
+  padding-left: var(--s-2);
+  font-size: var(--step--2); font-weight: 700; letter-spacing: 0.02em;
+  color: var(--ink-2);
+  border-left: 1px solid var(--grid-line-major);
+  overflow: hidden; white-space: nowrap;
+}
+.tl__day[data-weekend='true'] { color: var(--brand-ink); }
+.tl__day-badge {
+  font-size: 0.6rem; font-weight: 800; padding: 0 0.28rem; border-radius: var(--r-1);
+  background: var(--bg-3); color: var(--ink-3);
+}
+.tl__hour {
+  position: absolute; top: 1.7rem; height: 1.9rem;
+  display: flex; align-items: center;
+  padding-left: 4px;
+  font-family: var(--font-mono); font-size: 0.66rem; color: var(--ink-3);
+  border-left: 1px solid var(--grid-line);
+  white-space: nowrap;
+}
+.tl__hour[data-major='true'] { color: var(--ink-2); border-left-color: var(--grid-line-major); }
+
+.tl__lane { display: flex; border-bottom: 1px solid var(--line-1); }
+.tl__lane:hover .tl__lanehead { background: var(--bg-2); }
+.tl__lanehead {
+  position: sticky; left: 0; z-index: 12; flex: none;
+  width: var(--lane-w);
+  padding: var(--s-2) var(--s-3);
+  border-right: 1px solid var(--line-2);
+  background: var(--bg-1);
+  display: flex; align-items: center; gap: var(--s-2);
+  transition: background-color var(--dur-1) var(--ease-out);
+}
+.tl__lanehead::after {
+  content: ''; position: absolute; inset: 0 -14px 0 auto; width: 14px;
+  background: linear-gradient(90deg, color-mix(in oklab, var(--bg-0) 70%, transparent), transparent);
+  pointer-events: none;
+}
+.tl__lanename { display: block; font-size: var(--step--1); font-weight: 620; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl__lanemeta {
+  display: block; font-size: 0.66rem; color: var(--ink-3); font-family: var(--font-mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.tl__track {
+  position: relative; flex: none;
+  min-height: var(--lane-h);
+  background-image:
+    repeating-linear-gradient(90deg, var(--grid-line) 0 1px, transparent 1px var(--hour-w)),
+    repeating-linear-gradient(90deg, var(--grid-line-major) 0 1px, transparent 1px calc(var(--hour-w) * 6));
+}
+.tl__track[data-droppable='over'] { background-color: var(--brand-soft); }
+
+/* night shading so the eye reads sleep hours instantly */
+.tl__night {
+  position: absolute; top: 0; bottom: 0; z-index: 0;
+  background: var(--night-wash);
+  pointer-events: none;
+}
+/* the stretch of a lane where this person is not on the trip */
+.tl__away {
+  position: absolute; top: 0; z-index: 1;
+  display: flex; align-items: center;
+  background: repeating-linear-gradient(
+    135deg, transparent 0 9px, color-mix(in oklab, var(--ink-3) 7%, transparent) 9px 10px);
+  pointer-events: none;
+}
+/* These bands can be four days wide, so a centred label sits somewhere off the
+   side of the screen. Sticking it just clear of the lane headers keeps the
+   explanation next to the blank space it is explaining, at any scroll offset. */
+.tl__away-label {
+  position: sticky; left: calc(var(--lane-w) + var(--s-2));
+  padding: 1px var(--s-2); border-radius: var(--r-full);
+  background: color-mix(in oklab, var(--bg-1) 88%, transparent);
+  border: 1px solid var(--line-1);
+  font-size: 0.62rem; font-weight: 600; letter-spacing: var(--tracking-wide);
+  color: var(--ink-3); white-space: nowrap;
+}
+
+.tl__daybreak {
+  position: absolute; top: 0; bottom: 0; width: 1px; z-index: 1;
+  background: var(--line-3); pointer-events: none;
+}
+
+.tl__now {
+  position: absolute; top: 0; bottom: 0; width: 2px; z-index: 18;
+  background: var(--brand); pointer-events: none;
+  box-shadow: 0 0 12px 1px color-mix(in oklab, var(--brand) 60%, transparent);
+}
+.tl__now::before {
+  content: ''; position: absolute; top: 0; left: -4px;
+  border: 5px solid transparent; border-top-color: var(--brand); border-bottom: 0;
+}
+
+.tl .seg {
+  position: absolute;
+  top: var(--s-1); height: calc(var(--lane-h) - var(--s-2));
+  z-index: 4;
+  cursor: grab;
+  min-width: 6px;
+}
+/* Which detail survives is decided in JS from the measured width, so the
+   markup and the box always agree. CSS only tightens the padding to buy the
+   text a few more pixels on the way down. */
+.tl .seg[data-narrow='true'] { padding-inline: 4px 5px; }
+.tl .seg[data-tiny='true'] { padding: 0; }
+
+/* the gap ribbon between two stops — how long the journey takes */
+.tl__gap {
+  position: absolute; z-index: 3; height: 1.15rem;
+  display: flex; align-items: center; justify-content: center; gap: 3px;
+  border-radius: var(--r-full);
+  font-family: var(--font-mono); font-size: 0.6rem; font-weight: 600;
+  color: var(--ink-2);
+  background: color-mix(in oklab, var(--bg-3) 88%, transparent);
+  border: 1px dashed var(--line-2);
+  white-space: nowrap; overflow: hidden;
+  pointer-events: none;
+}
+.tl__gap[data-level='heavy'] { color: var(--warn-ink); border-color: color-mix(in oklab, var(--warn) 50%, transparent); }
+.tl__gap[data-level='severe'] { color: var(--danger-ink); border-color: color-mix(in oklab, var(--danger) 55%, transparent); }
+.tl__gap[data-short='true'] {
+  color: var(--danger-ink); border-style: solid;
+  border-color: var(--danger); background: var(--danger-soft);
+}
+
+/* live time readout that follows a drag */
+.tl__cursor-time {
+  position: fixed; z-index: 300; pointer-events: none;
+  padding: 0.2rem var(--s-2);
+  background: var(--brand-solid); color: var(--on-brand);
+  border-radius: var(--r-1);
+  font-family: var(--font-mono); font-size: var(--step--2); font-weight: 700;
+  box-shadow: var(--shadow-2);
+}
+
+/* ============================================================
+   DAY GRID — vertical hours, one column per person/group
+   ============================================================ */
+
+.dg { display: flex; height: 100%; overflow: auto; overscroll-behavior: contain; }
+.dg__gutter {
+  position: sticky; left: 0; z-index: 12; flex: none;
+  width: 3.6rem; background: var(--bg-1);
+  border-right: 1px solid var(--line-2);
+}
+.dg__gutter-head { position: sticky; top: 0; z-index: 3; height: var(--dg-head); background: var(--bg-1); border-bottom: 1px solid var(--line-2); }
+.dg__hour {
+  position: relative; height: var(--hour-h);
+  border-bottom: 1px solid var(--grid-line);
+  font-family: var(--font-mono); font-size: 0.64rem; color: var(--ink-3);
+  padding: 2px var(--s-2) 0 0; text-align: right;
+}
+.dg__cols { display: flex; flex: 1 1 auto; min-width: min-content; }
+.dg__col { flex: 1 1 0; min-width: 8.5rem; border-right: 1px solid var(--line-1); position: relative; }
+.dg__colhead {
+  position: sticky; top: 0; z-index: 10;
+  height: var(--dg-head);
+  display: flex; align-items: center; gap: var(--s-2);
+  padding: var(--s-2);
+  background: color-mix(in oklab, var(--bg-1) 93%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line-2);
+}
+.dg__colname { display: block; font-size: var(--step--1); font-weight: 620; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dg__body {
+  position: relative;
+  background-image: repeating-linear-gradient(180deg, var(--grid-line) 0 1px, transparent 1px var(--hour-h));
+}
+.dg__body[data-droppable='over'] { background-color: var(--brand-soft); }
+.dg .seg { position: absolute; left: 3px; right: 3px; cursor: grab; justify-content: flex-start; }
+.dg .seg[data-short='true'] { padding-block: 1px; justify-content: center; }
+.dg__now { position: absolute; left: 0; right: 0; height: 2px; background: var(--brand); z-index: 15; }
+.dg__now::before { content: ''; position: absolute; left: -3px; top: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--brand); }
+
+/* ============================================================
+   AGENDA — the printable, screen-reader-friendly source of truth
+   ============================================================ */
+
+.agenda { max-width: 62rem; margin: 0 auto; padding: var(--s-5) var(--s-4) var(--s-8); display: grid; gap: var(--s-6); }
+.agenda__day { display: grid; gap: var(--s-3); }
+.agenda__dayhead {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: baseline; gap: var(--s-3); flex-wrap: wrap;
+  padding: var(--s-3) 0;
+  background: linear-gradient(var(--bg-0) 65%, transparent);
+}
+.agenda__dayname { font-size: var(--step-2); font-weight: 680; letter-spacing: var(--tracking-tight); }
+.agenda__daymeta { font-size: var(--step--1); color: var(--ink-3); }
+
+.agenda__list { display: grid; gap: 2px; }
+.agenda__item {
+  display: grid;
+  grid-template-columns: 5.6rem minmax(0, 1fr) auto;
+  gap: var(--s-3);
+  align-items: start;
+  width: 100%;
+  padding: var(--s-3);
+  border-radius: var(--r-3);
+  border: 1px solid transparent;
+  text-align: left;
+  transition: background-color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out);
+}
+.agenda__item:hover { background: var(--bg-2); border-color: var(--line-1); }
+.agenda__item[aria-selected='true'] { background: var(--bg-2); border-color: var(--c); }
+.agenda__time {
+  display: grid; gap: 1px;
+  font-family: var(--font-mono); font-size: var(--step--1); font-weight: 600;
+  color: var(--ink-1); padding-top: 1px;
+}
+.agenda__time small { font-size: 0.62rem; color: var(--ink-3); font-weight: 500; }
+.agenda__main { display: grid; gap: 3px; min-width: 0; }
+.agenda__title { font-size: var(--step-0); font-weight: 620; letter-spacing: -0.01em; display: flex; align-items: center; gap: var(--s-2); }
+.agenda__title::before {
+  content: ''; width: 8px; height: 8px; border-radius: 2px; flex: none;
+  background: var(--c); box-shadow: 0 0 0 3px color-mix(in oklab, var(--c) 18%, transparent);
+}
+.agenda__sub { font-size: var(--step--1); color: var(--ink-2); display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-3); }
+.agenda__notes { font-size: var(--step--1); color: var(--ink-3); line-height: var(--lh-body); }
+.agenda__who { display: flex; align-items: center; gap: var(--s-1); }
+
+.agenda__travel {
+  display: flex; align-items: center; gap: var(--s-2);
+  margin-left: 6.2rem; padding: var(--s-1) var(--s-3);
+  font-size: var(--step--2); color: var(--ink-3);
+  font-family: var(--font-mono);
+  border-left: 2px dashed var(--line-2);
+}
+.agenda__travel[data-short='true'] { color: var(--danger-ink); border-left-color: var(--danger); font-weight: 600; }
+
+@media (max-width: 44rem) {
+  .agenda__item { grid-template-columns: 4.4rem minmax(0, 1fr); }
+  .agenda__who { grid-column: 1 / -1; }
+  .agenda__travel { margin-left: var(--s-3); }
+}
+
+/* ============================================================
+   MAP
+   ============================================================ */
+
+.mapwrap { position: relative; height: 100%; min-height: 22rem; }
+.mapwrap .leaflet-container {
+  height: 100%; width: 100%;
+  background: var(--bg-2);
+  font-family: var(--font-sans);
+  outline: none;
+}
+.mapwrap .leaflet-tile-pane { filter: var(--map-filter); }
+.mapwrap .leaflet-control-zoom a {
+  background: var(--bg-2); color: var(--ink-1); border-color: var(--line-2);
+  width: 2rem; height: 2rem; line-height: 2rem;
+}
+.mapwrap .leaflet-control-zoom a:hover { background: var(--bg-3); }
+.mapwrap .leaflet-control-attribution {
+  background: color-mix(in oklab, var(--bg-1) 86%, transparent);
+  color: var(--ink-3); font-size: 0.62rem;
+}
+.mapwrap .leaflet-control-attribution a { color: var(--ink-2); }
+.mapwrap .leaflet-popup-content-wrapper, .mapwrap .leaflet-popup-tip {
+  background: var(--bg-2); color: var(--ink-1); box-shadow: var(--shadow-3);
+  border: 1px solid var(--line-2);
+}
+.mapwrap .leaflet-popup-content { margin: var(--s-3); font-size: var(--step--1); }
+
+.map-pin {
+  display: grid; place-items: center;
+  width: 26px; height: 26px; border-radius: 50% 50% 50% 6px;
+  transform: rotate(-45deg);
+  background: var(--c, var(--brand));
+  border: 2px solid var(--bg-0);
+  box-shadow: var(--shadow-2);
+  font-size: 11px; font-weight: 800; color: #08090e;
+}
+.map-pin > * { transform: rotate(45deg); }
+.map-pin[data-active='true'] { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+.map-legend {
+  position: absolute; z-index: 500; left: var(--s-3); bottom: var(--s-5);
+  padding: var(--s-3);
+  background: color-mix(in oklab, var(--bg-1) 92%, transparent);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--line-2); border-radius: var(--r-3);
+  box-shadow: var(--shadow-2);
+  display: grid; gap: var(--s-2);
+  max-width: 15rem;
+}
+.map-overlay {
+  position: absolute; z-index: 500; right: var(--s-3); top: var(--s-3);
+  display: grid; gap: var(--s-2); justify-items: end;
+  max-width: min(20rem, 60vw);
+}
+.map-route-card {
+  padding: var(--s-3);
+  background: color-mix(in oklab, var(--bg-1) 94%, transparent);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--line-2); border-radius: var(--r-3);
+  box-shadow: var(--shadow-2);
+  display: grid; gap: var(--s-1);
+  font-size: var(--step--2);
+}
+@media (max-width: 60rem) { .map-legend { display: none; } }
+
+/* ============================================================
+   PEOPLE
+   ============================================================ */
+
+.people { padding: var(--s-5) var(--s-4) var(--s-8); display: grid; gap: var(--s-4);
+  grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr)); max-width: 90rem; margin: 0 auto; }
+.pcard { display: grid; gap: var(--s-3); padding: var(--s-4); }
+.pcard__head { display: flex; align-items: center; gap: var(--s-3); }
+.pcard__name { font-size: var(--step-1); font-weight: 650; letter-spacing: var(--tracking-tight); }
+.pcard__meta { font-size: var(--step--2); color: var(--ink-3); }
+.pcard__grid { display: grid; grid-template-columns: auto 1fr; gap: var(--s-1) var(--s-3); font-size: var(--step--1); align-items: baseline; }
+.pcard__grid dt { color: var(--ink-3); font-size: var(--step--2); text-transform: uppercase; letter-spacing: var(--tracking-wide); font-weight: 650; }
+.pcard__grid dd { margin: 0; color: var(--ink-1); }
+.pcard__bar { display: flex; height: 8px; border-radius: var(--r-full); overflow: hidden; background: var(--bg-3); }
+.pcard__bar span { display: block; }
+
+/* ============================================================
+   BOARD (idea backlog)
+   ============================================================ */
+
+.board { display: flex; gap: var(--s-3); padding: var(--s-4); height: 100%; overflow-x: auto; align-items: start; }
+.board__col {
+  flex: none; width: 17rem; max-height: 100%;
+  display: flex; flex-direction: column; gap: var(--s-2);
+  padding: var(--s-3);
+  background: color-mix(in oklab, var(--bg-1) 70%, transparent);
+  border: 1px solid var(--line-1); border-radius: var(--r-3);
+}
+.board__col[data-droppable='over'] { border-color: var(--brand-line); background: var(--brand-soft); }
+.board__colhead { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-2); }
+.board__list { display: grid; gap: var(--s-2); overflow-y: auto; padding-bottom: var(--s-2); }
+.idea {
+  display: grid; gap: var(--s-2); padding: var(--s-3);
+  background: var(--bg-2); border: 1px solid var(--line-2); border-radius: var(--r-2);
+  cursor: grab; text-align: left;
+}
+.idea:hover { border-color: var(--line-3); box-shadow: var(--shadow-1); }
+.idea__title { font-size: var(--step--1); font-weight: 620; }
+.idea__meta { display: flex; align-items: center; gap: var(--s-2); font-size: var(--step--2); color: var(--ink-3); }
+
+/* ============================================================
+   ISSUES panel
+   ============================================================ */
+
+.issues { display: grid; gap: var(--s-2); }
+.issue {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--s-2) var(--s-3);
+  width: 100%; padding: var(--s-3);
+  border-radius: var(--r-2); border: 1px solid var(--line-1);
+  background: var(--bg-2); text-align: left;
+}
+.issue:hover { border-color: var(--line-3); }
+.issue__dot { width: 9px; height: 9px; border-radius: 2px; margin-top: 5px; }
+.issue[data-sev='error'] .issue__dot { background: var(--danger); }
+.issue[data-sev='warning'] .issue__dot { background: var(--warn); }
+.issue[data-sev='info'] .issue__dot { background: var(--accent); }
+.issue[data-sev='error'] { border-left: 3px solid var(--danger); }
+.issue[data-sev='warning'] { border-left: 3px solid var(--warn); }
+.issue[data-sev='info'] { border-left: 3px solid var(--accent); }
+.issue__title { font-size: var(--step--1); font-weight: 640; }
+.issue__detail { font-size: var(--step--2); color: var(--ink-2); line-height: var(--lh-body); }
+
+/* ============================================================
+   WEEK / MONTH grid
+   ============================================================ */
+
+.wk { padding: var(--s-4); display: grid; gap: var(--s-3); max-width: 96rem; margin: 0 auto; }
+.wk__grid { display: grid; grid-template-columns: repeat(var(--cols, 7), minmax(0, 1fr)); gap: var(--s-2); }
+.wk__cell {
+  display: flex; flex-direction: column; gap: var(--s-2);
+  min-height: 9rem; padding: var(--s-2);
+  min-width: 0; overflow: hidden;
+  background: color-mix(in oklab, var(--bg-1) 62%, transparent);
+  border: 1px solid var(--line-1); border-radius: var(--r-2);
+}
+.wk__cell[data-today='true'] { border-color: var(--brand-line); box-shadow: inset 0 0 0 1px var(--brand-line); }
+.wk__cell[data-droppable='over'] { background: var(--brand-soft); border-color: var(--brand-line); }
+.wk__cellhead { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-2); }
+.wk__date { font-family: var(--font-mono); font-size: var(--step-0); font-weight: 700; }
+.wk__dow { font-size: var(--step--2); color: var(--ink-3); text-transform: uppercase; letter-spacing: var(--tracking-wide); }
+.wk__pill {
+  display: flex; align-items: center; gap: var(--s-1);
+  padding: 2px var(--s-2); border-radius: var(--r-1);
+  background: color-mix(in oklab, var(--c) 20%, var(--bg-2));
+  border-left: 3px solid var(--c);
+  font-size: var(--step--2); text-align: left; width: 100%;
+  overflow: hidden;
+}
+.wk__pill:hover { background: color-mix(in oklab, var(--c) 32%, var(--bg-2)); }
+.wk__list { display: grid; gap: 2px; min-width: 0; }
+.wk__list > li { min-width: 0; }
+.wk__more {
+  align-self: start; padding: 2px var(--s-2); border-radius: var(--r-1);
+  font-size: var(--step--2); font-weight: 600; color: var(--ink-2);
+  background: var(--bg-3); border: 1px solid var(--line-1);
+}
+.wk__more:hover { color: var(--ink-1); border-color: var(--line-2); }
+.wk__empty { font-size: var(--step--2); color: var(--ink-3); padding: var(--s-2); margin: 0; }
+.wk__pill time { font-weight: 700; flex: none; }
+@media (max-width: 62rem) { .wk__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 34rem) { .wk__grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* ideas — the interest row */
+.idea__votes { display: grid; gap: var(--s-1); }
+.idea__voteshead {
+  display: flex; align-items: baseline; gap: var(--s-2);
+  font-size: var(--step--2); color: var(--ink-3);
+  text-transform: uppercase; letter-spacing: var(--tracking-wide);
+}
+.idea__voteshead b { color: var(--ink-2); font-weight: 700; letter-spacing: 0; text-transform: none; }
+.idea__faces { display: flex; flex-wrap: wrap; gap: 3px; }
+.idea__face[data-on='false'] {
+  background: transparent; color: var(--ink-3);
+  border: 1px dashed var(--line-2);
+}
+.idea__face[data-on='false']:hover { color: var(--ink-2); border-color: var(--ink-3); border-style: solid; }
+
+/* ============================================================
+   PRINT — the itinerary anyone can hand out on paper
+   ============================================================ */
+
+@media print {
+  @page { margin: 14mm 12mm; }
+  body::before, .topbar, .rail, .inspector, .tabbar, .viewbar, .toasts, .scrim { display: none !important; }
+  .app, .shell, .main, .view-body { display: block !important; height: auto !important; overflow: visible !important; }
+  body { background: #fff; color: #000; }
+  .agenda { max-width: none; padding: 0; }
+  .agenda__day { break-inside: avoid; page-break-inside: avoid; }
+  .agenda__dayhead { position: static; background: none; border-bottom: 2px solid #000; }
+  .agenda__item { border: 0; border-bottom: 1px solid #ccc; border-radius: 0; padding: 6pt 0; }
+  .agenda__title::before { box-shadow: none; border: 1px solid #000; }
+  .print-only { display: block !important; }
+  a[href^='http']::after { content: ' (' attr(href) ')'; font-size: 8pt; color: #555; }
+
+  .print-head { margin: 0 0 10pt; padding-bottom: 6pt; border-bottom: 2pt solid #000; }
+  .print-head h2 { font-size: 18pt; margin: 0 0 2pt; }
+  .print-head p { font-size: 9pt; color: #444; margin: 0; }
+
+  /* Every day starts a clean block; a heading never strands at a page foot. */
+  .agenda__dayname { font-size: 13pt; }
+  .agenda__dayhead { break-after: avoid; page-break-after: avoid; }
+  .agenda__item { break-inside: avoid; page-break-inside: avoid; }
+  .agenda__travel { color: #444; border-left-color: #999; }
+  .agenda__travel[data-short='true'] { color: #000; font-weight: 700; }
+  .chip { border: 1px solid #666; color: #000; background: none; }
+  .avatar { border: 1px solid #000; background: none !important; color: #000 !important; }
+}
+.print-only { display: none; }
+
+/* Narrow screens: the lane gutter must not eat the plan. */
+@media (max-width: 60rem) {
+  .tl__lanename { font-size: var(--step--2); }
+  .tl__lanehead { padding: var(--s-2); gap: var(--s-1); }
+  .tl__corner { padding: var(--s-2); }
+}

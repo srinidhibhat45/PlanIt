@@ -1,0 +1,229 @@
+/* ============================================================
+   PlanIt design tokens
+   Every colour pair used for text has been checked against its
+   surface; the ratio is noted where it is load-bearing.
+   ============================================================ */
+
+:root {
+  /* ---- type ---- */
+  --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, monospace;
+
+  --step--2: clamp(0.68rem, 0.66rem + 0.10vw, 0.74rem);
+  --step--1: clamp(0.79rem, 0.76rem + 0.15vw, 0.87rem);
+  --step-0:  clamp(0.92rem, 0.89rem + 0.18vw, 1.00rem);
+  --step-1:  clamp(1.08rem, 1.02rem + 0.30vw, 1.25rem);
+  --step-2:  clamp(1.30rem, 1.18rem + 0.55vw, 1.65rem);
+  --step-3:  clamp(1.60rem, 1.36rem + 1.10vw, 2.30rem);
+  --step-4:  clamp(2.00rem, 1.55rem + 2.10vw, 3.30rem);
+
+  --lh-tight: 1.14;
+  --lh-snug: 1.32;
+  --lh-body: 1.55;
+  --tracking-tight: -0.022em;
+  --tracking-wide: 0.085em;
+
+  /* ---- spacing (4px base, fluid at the top end) ---- */
+  --s-1: 0.25rem; --s-2: 0.5rem;  --s-3: 0.75rem; --s-4: 1rem;
+  --s-5: 1.5rem; --s-6: 2rem;    --s-7: 3rem;    --s-8: 4rem;
+
+  /* ---- shape ---- */
+  --r-1: 6px; --r-2: 10px; --r-3: 14px; --r-4: 20px; --r-full: 999px;
+
+  /* ---- motion ---- */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-1: 110ms; --dur-2: 190ms; --dur-3: 320ms;
+
+  /* ---- layout ---- */
+  --rail-w: 17rem;
+  --inspector-w: 23rem;
+  --bar-h: 3.5rem;
+  --tap: 44px;              /* WCAG 2.5.5 minimum target */
+
+  color-scheme: dark;
+}
+
+/* ============ DARK (default) ============ */
+:root,
+:root[data-theme='dark'] {
+  --bg-0: #08090e;          /* page ground */
+  --bg-1: #0d0f17;          /* panel */
+  --bg-2: #141724;          /* raised panel */
+  --bg-3: #1c2032;          /* hover / input */
+  --bg-4: #262b40;          /* pressed / selected */
+  --scrim: rgba(4, 5, 9, 0.72);
+
+  --line-1: rgba(255, 255, 255, 0.075);   /* hairline */
+  --line-2: rgba(255, 255, 255, 0.14);    /* visible divider */
+  --line-3: rgba(255, 255, 255, 0.26);    /* strong border, 3:1 vs bg-1 */
+
+  --ink-1: #edeff7;         /* 17.2:1 on bg-0 — AAA */
+  --ink-2: #a8b0c6;         /*  8.1:1 on bg-0 — AAA body */
+  --ink-3: #8b94ab;         /*  6.3:1 on bg-0 — comfortable AA everywhere */
+  --ink-invert: #08090e;
+
+  --brand: #ff6b35;
+  --brand-ink: #ffb094;     /* 7.6:1 on bg-0 — text-safe brand tint */
+  /* A filled brand button. White on this orange is only 3.1:1, so the label
+     goes dark instead and lands at 6.9:1 — AAA, and a stronger look. */
+  --brand-solid: #ff6b35;
+  --on-brand: #170600;
+  --brand-soft: rgba(255, 107, 53, 0.16);
+  --brand-line: rgba(255, 107, 53, 0.42);
+
+  --accent: #14d4c4;
+  --accent-ink: #6ff0e4;
+  --accent-soft: rgba(20, 212, 196, 0.15);
+
+  --danger: #ff3b5c;
+  --danger-ink: #ff97a8;
+  --on-danger: #1a0006;     /* 5.7:1 on --danger; white would be 3.5:1 */
+  --danger-soft: rgba(255, 59, 92, 0.16);
+
+  --warn: #ffb020;
+  --warn-ink: #ffd07a;
+  --on-warn: #1f1400;
+  --warn-soft: rgba(255, 176, 32, 0.16);
+
+  --ok: #2dd4a7;
+  --ok-ink: #7fe9cb;
+  --ok-soft: rgba(45, 212, 167, 0.15);
+
+  --focus: #7cc4ff;
+  --focus-ring: 0 0 0 2px var(--bg-0), 0 0 0 4px var(--focus);
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-2: 0 4px 14px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-3: 0 18px 48px rgba(0, 0, 0, 0.62), 0 2px 8px rgba(0, 0, 0, 0.5);
+  --shadow-drag: 0 22px 46px rgba(0, 0, 0, 0.66), 0 0 0 1px var(--line-3);
+
+  --grid-line: rgba(255, 255, 255, 0.055);
+  --grid-line-major: rgba(255, 255, 255, 0.115);
+  --night-wash: rgba(10, 14, 32, 0.55);
+
+  --map-filter: invert(0.92) hue-rotate(185deg) saturate(0.5) brightness(0.94) contrast(1.05);
+}
+
+/* ============ LIGHT ============ */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg-0: #f7f5f1;          /* warm paper, not clinical white */
+  --bg-1: #ffffff;
+  --bg-2: #fbfaf7;
+  --bg-3: #efece5;
+  --bg-4: #e3dfd5;
+  --scrim: rgba(38, 34, 28, 0.4);
+
+  --line-1: rgba(28, 24, 18, 0.09);
+  --line-2: rgba(28, 24, 18, 0.16);
+  --line-3: rgba(28, 24, 18, 0.34);
+
+  --ink-1: #16181f;         /* 15.8:1 on bg-1 — AAA */
+  --ink-2: #4a5060;         /*  7.9:1 on bg-1 — AAA body */
+  --ink-3: #5d6479;         /*  5.9:1 on bg-1 — comfortable AA */
+  --ink-invert: #ffffff;
+
+  --brand: #c03f0e;         /* darkened so it passes on paper */
+  --brand-ink: #a83408;     /* 6.2:1 on bg-1 */
+  --brand-solid: #a8330b;   /* white on this is 6.8:1 */
+  --on-brand: #ffffff;
+  --brand-soft: rgba(209, 68, 15, 0.11);
+  --brand-line: rgba(209, 68, 15, 0.4);
+
+  --accent: #00857a;
+  --accent-ink: #00655d;
+  --accent-soft: rgba(0, 133, 122, 0.11);
+
+  --danger: #c8102e;
+  --danger-ink: #a30d26;
+  --on-danger: #ffffff;     /* 6.4:1 on --danger */
+  --danger-soft: rgba(200, 16, 46, 0.1);
+
+  --warn: #a56100;
+  --warn-ink: #8a5100;
+  --on-warn: #ffffff;
+  --warn-soft: rgba(165, 97, 0, 0.12);
+
+  --ok: #067a55;
+  --ok-ink: #056143;
+  --ok-soft: rgba(6, 122, 85, 0.11);
+
+  --focus: #0b62d6;
+  --focus-ring: 0 0 0 2px var(--bg-1), 0 0 0 4px var(--focus);
+
+  --shadow-1: 0 1px 2px rgba(40, 32, 20, 0.09);
+  --shadow-2: 0 4px 14px rgba(40, 32, 20, 0.11), 0 1px 2px rgba(40, 32, 20, 0.07);
+  --shadow-3: 0 18px 44px rgba(40, 32, 20, 0.18), 0 2px 8px rgba(40, 32, 20, 0.1);
+  --shadow-drag: 0 22px 46px rgba(40, 32, 20, 0.24), 0 0 0 1px var(--line-3);
+
+  --grid-line: rgba(28, 24, 18, 0.07);
+  --grid-line-major: rgba(28, 24, 18, 0.15);
+  --night-wash: rgba(60, 70, 110, 0.09);
+
+  --map-filter: saturate(0.86) contrast(1.02);
+}
+
+/* ============ segment kind palette ============
+   Each kind carries a hue plus an icon and a text label, so colour is never
+   the only channel carrying meaning (WCAG 1.4.1). */
+:root {
+  --k-flight: #4cc9f0;
+  --k-transfer: #14d4c4;
+  --k-checkin: #9d8cff;
+  --k-checkout: #9d8cff;
+  --k-session: #ff6b35;
+  --k-workshop: #ff3b8e;
+  --k-meal: #ffb020;
+  --k-activity: #2dd4a7;
+  --k-free: #7b849c;
+  --k-rest: #6c7bd9;
+  --k-buffer: #8a93ab;
+  --k-note: #b0b8cc;
+}
+
+:root[data-theme='light'] {
+  --k-flight: #0a7ea4;
+  --k-transfer: #00857a;
+  --k-checkin: #5b46c9;
+  --k-checkout: #5b46c9;
+  --k-session: #c2410c;
+  --k-workshop: #be1259;
+  --k-meal: #9a6100;
+  --k-activity: #067a55;
+  --k-free: #5c6478;
+  --k-rest: #3d4bb0;
+  --k-buffer: #5f6779;
+  --k-note: #4a5060;
+}
+
+/* ---- density ---- */
+:root[data-density='compact'] {
+  --s-3: 0.5rem; --s-4: 0.7rem; --s-5: 1rem; --s-6: 1.4rem;
+  --bar-h: 3rem;
+}
+
+/* ---- user-driven contrast boost ---- */
+:root[data-contrast='more'] {
+  --line-1: var(--line-2);
+  --line-2: var(--line-3);
+  --ink-2: var(--ink-1);
+  --ink-3: var(--ink-2);
+  --grid-line: var(--grid-line-major);
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --line-1: rgba(255, 255, 255, 0.2);
+    --line-2: rgba(255, 255, 255, 0.34);
+    --ink-2: #dfe3ef;
+    --ink-3: #b9c0d2;
+  }
+  :root[data-theme='light'] {
+    --line-1: rgba(28, 24, 18, 0.22);
+    --line-2: rgba(28, 24, 18, 0.4);
+    --ink-2: #22262f;
+    --ink-3: #3b4150;
+  }
+}

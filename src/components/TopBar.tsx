@@ -1,0 +1,124 @@
+import type { ReactElement } from 'react';
+import type { ClockMode, Trip, ViewId } from '../core/types';
+import { clockLabel } from '../core/clock';
+import { ClockMenu } from './ClockMenu';
+import { issueSummary } from '../core/schedule';
+import type { Issue } from '../core/types';
+import {
+  IconAgenda, IconBoard, IconDay, IconMap, IconMenu, IconPeople, IconRedo, IconSearch,
+  IconShare, IconSparkle, IconSun, IconMoon, IconTimeline, IconUndo, IconWarn, IconWeek,
+} from './Icons';
+
+export const VIEWS: { id: ViewId; label: string; Icon: (p: { size?: number }) => ReactElement }[] = [
+  { id: 'timeline', label: 'Timeline', Icon: IconTimeline },
+  { id: 'day', label: 'Day', Icon: IconDay },
+  { id: 'week', label: 'Trip', Icon: IconWeek },
+  { id: 'agenda', label: 'Agenda', Icon: IconAgenda },
+  { id: 'map', label: 'Map', Icon: IconMap },
+  { id: 'people', label: 'People', Icon: IconPeople },
+  { id: 'board', label: 'Ideas', Icon: IconBoard },
+];
+
+export function TopBar({
+  trip, view, clock, issues, canUndo, canRedo, theme, railOpen,
+  onView, onClock, onUndo, onRedo, onShare, onTheme, onToggleRail, onOpenIssues, onOpenPalette,
+  onOpenTour,
+}: {
+  trip: Trip; view: ViewId; clock: ClockMode; issues: Issue[];
+  canUndo: boolean; canRedo: boolean; theme: 'dark' | 'light'; railOpen: boolean;
+  onView: (v: ViewId) => void;
+  onClock: (c: ClockMode) => void;
+  onUndo: () => void; onRedo: () => void;
+  onShare: () => void; onTheme: () => void;
+  onToggleRail: () => void; onOpenIssues: () => void; onOpenPalette: () => void;
+  onOpenTour: () => void;
+}) {
+  const s = issueSummary(issues);
+
+  return (
+    <header className="topbar">
+      <div className="brand">
+        <button
+          className="btn btn--icon btn--ghost" onClick={onToggleRail}
+          aria-label={railOpen ? 'Hide filters panel' : 'Show filters panel'}
+          aria-expanded={railOpen}
+        >
+          <IconMenu />
+        </button>
+        <span className="brand__mark" aria-hidden="true">P</span>
+        <span style={{ minWidth: 0 }}>
+          <h1 className="brand__name">{trip.name}</h1>
+          <p className="brand__sub">{trip.subtitle}</p>
+        </span>
+      </div>
+
+      <div className="switcher" role="tablist" aria-label="View">
+        {VIEWS.map(({ id, label, Icon }) => (
+          <button
+            key={id}
+            role="tab"
+            className="switcher__btn"
+            aria-selected={view === id}
+            aria-controls="view-panel"
+            id={`tab-${id}`}
+            tabIndex={view === id ? 0 : -1}
+            onClick={() => onView(id)}
+            onKeyDown={(e) => {
+              const i = VIEWS.findIndex((v) => v.id === view);
+              if (e.key === 'ArrowRight') { e.preventDefault(); onView(VIEWS[(i + 1) % VIEWS.length].id); }
+              if (e.key === 'ArrowLeft') { e.preventDefault(); onView(VIEWS[(i - 1 + VIEWS.length) % VIEWS.length].id); }
+            }}
+          >
+            <Icon size={15} />
+            <span className="switcher__label">{label}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="topbar__right">
+        <ClockMenu trip={trip} clock={clock} onClock={onClock} />
+        <span className="sr-only" aria-live="polite">Times shown: {clockLabel(clock, trip)}</span>
+
+        <button
+          className="btn btn--icon btn--ghost desktop-only" onClick={onOpenTour}
+          aria-label="What each view is for" title="What each view is for"
+        >
+          <IconSparkle />
+        </button>
+        <button
+          className="btn btn--icon btn--ghost desktop-only" onClick={onOpenPalette}
+          aria-label="Find any action (Cmd K)" title="Find any action  ⌘K"
+        >
+          <IconSearch />
+        </button>
+        <button className="btn btn--icon btn--ghost desktop-only" onClick={onUndo} disabled={!canUndo} aria-label="Undo">
+          <IconUndo />
+        </button>
+        <button className="btn btn--icon btn--ghost desktop-only" onClick={onRedo} disabled={!canRedo} aria-label="Redo">
+          <IconRedo />
+        </button>
+
+        <button
+          className="btn btn--icon btn--ghost issue-badge" onClick={onOpenIssues}
+          aria-label={`${s.total} issues found: ${s.error} blocking, ${s.warning} risky, ${s.info} suggestions`}
+        >
+          <IconWarn />
+          {s.total > 0 && (
+            <span className="issue-badge__count" data-sev={s.error ? 'error' : 'warning'}>
+              {s.error || s.warning || s.info}
+            </span>
+          )}
+        </button>
+
+        <button className="btn btn--icon btn--ghost" onClick={onTheme}
+          aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}>
+          {theme === 'dark' ? <IconSun /> : <IconMoon />}
+        </button>
+
+        <button className="btn btn--primary" onClick={onShare}>
+          <IconShare size={15} /> <span className="desktop-only">Share</span>
+        </button>
+      </div>
+    </header>
+  );
+}
