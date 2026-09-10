@@ -1,0 +1,8 @@
+# Build output — Vercel builds from source.
+dist/
+tsconfig.tsbuildinfo
+
+# Not needed to build the site.
+test/
+tools/
+.claude/

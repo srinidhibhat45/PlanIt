@@ -30,6 +30,44 @@ Two caveats when serving on the network:
   secure context in some browsers, so on a phone the link may need to be
   selected and copied by hand — the text field is there for exactly that.
 
+## Deploying
+
+The build is four static files, so any static host will do. `vercel.json` has
+the settings for Vercel:
+
+```bash
+npx vercel        # preview deployment
+npx vercel --prod # production
+```
+
+Or import the repo at [vercel.com/new](https://vercel.com/new) — the committed
+config supplies the framework, build command and output directory, so leave the
+project settings on their defaults and do not add any environment variables.
+There are none: nothing is configured at build time, and there is no backend to
+point at.
+
+What the config sets, and why:
+
+- **`npm ci` + Node 22** (`.nvmrc`, `engines`). The lockfile is committed, so
+  builds are reproducible.
+- **A catch-all rewrite to `/index.html`.** Share links live in the URL
+  fragment (`/#/s/…`), which never reaches the server, so this only matters for
+  someone typing a stray path — but it makes that a plan rather than a 404.
+- **`immutable` caching on `/assets/*`,** which is safe because Vite hashes
+  those filenames. `index.html` stays revalidated so a deploy takes effect at
+  once.
+- **A content security policy** naming the three origins the app actually
+  talks to: Google Fonts, OpenStreetMap tiles and the OSRM routing service.
+  Anything else is refused by the browser. If you add a network call, add its
+  origin here or it will be blocked in production but work fine in `npm run
+  dev`.
+
+Source maps are left out of a production build, since they are ~2.2 MB and the
+source is in this repo anyway. `SOURCEMAP=1 npm run build` puts them back.
+
+Once deployed, share links carry the deployed origin, the clipboard button
+works everywhere (HTTPS), and both LAN caveats above stop applying.
+
 ---
 
 ## The problem it was built against
