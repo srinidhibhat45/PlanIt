@@ -200,6 +200,28 @@ export function CanvasView({
     [sel, selectedId],
   );
 
+  /* `selection` is the render's view of what is selected, which is what the
+     cards and the toolbar should draw. A *handler* needs the live value: two
+     clicks in one tick never see a render between them, so both would read the
+     same array and the second would win outright instead of adding to the
+     first. `selRef` is that live value — the same trick `live` plays for the
+     pointer handlers below — and `chooseCards` is the only way `sel` is set,
+     so the two cannot drift. */
+  const selRef = useRef(sel);
+  selRef.current = sel;
+
+  const chooseCards = useCallback((next: ID[], notify = true) => {
+    selRef.current = next;
+    setSel(next);
+    if (notify) handlers.onSelect(next[next.length - 1] ?? null);
+  }, [handlers]);
+
+  /** What is selected right now, live — the base any handler should build on. */
+  const liveSelection = useCallback(
+    () => (selRef.current.length ? selRef.current : selectedId ? [selectedId] : []),
+    [selectedId],
+  );
+
   const linked = useMemo(() => {
     const set = new Set<ID>();
     for (const l of trip.links ?? []) { set.add(l.fromId); set.add(l.toId); }
@@ -319,11 +341,10 @@ export function CanvasView({
     const ids = [...selection];
     if (!ids.length) return false;
     handlers.onDeleteCards(ids);
-    setSel([]);
-    handlers.onSelect(null);
+    chooseCards([]);
     setTimeCard(null);
     return true;
-  }, [handlers, selLink, selSticky, selFrame, selection]);
+  }, [handlers, chooseCards, selLink, selSticky, selFrame, selection]);
 
   /** Pin or unpin the selection. A mixed selection pins, which is the
    *  forgiving way round. Shared by the toolbar button and `P`. */
@@ -373,8 +394,7 @@ export function CanvasView({
       if (e.metaKey || e.ctrlKey) {
         if (e.key.toLowerCase() === 'a') {
           const all = cards.map((c) => c.id);
-          setSel(all);
-          handlers.onSelect(all[all.length - 1] ?? null);
+          chooseCards(all);
           handlers.onAnnounce(`${all.length} ${all.length === 1 ? 'card' : 'cards'} selected.`);
           e.preventDefault();
         } else if (e.key === 'Enter') {
@@ -394,7 +414,7 @@ export function CanvasView({
 
       switch (key) {
         case 'Escape':
-          setSel([]); setSelLink(null); setSelSticky(null); setSelFrame(null);
+          chooseCards([], false); setSelLink(null); setSelSticky(null); setSelFrame(null);
           setTimeCard(null); setTool('select');
           return;
         case 'Delete':
@@ -439,7 +459,7 @@ export function CanvasView({
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
-  }, [handlers, cards, selection, deleteSelection, nudge, togglePin, fit, zoomBy]);
+  }, [handlers, chooseCards, cards, selection, deleteSelection, nudge, togglePin, fit, zoomBy]);
 
   // Fit once, as soon as there is something to fit to.
   const fitted = useRef(false);
@@ -453,16 +473,19 @@ export function CanvasView({
 
   const clearOthers = () => { setSelLink(null); setSelSticky(null); setSelFrame(null); };
 
+  /** Click selects; shift-click adds or removes.
+   *
+   *  The next selection is worked out *here* rather than inside a `setSel`
+   *  updater: React may run an updater during a render, and telling the app
+   *  about the new selection from in there is a setState-during-render bug —
+   *  it warned about exactly that in the console. Composing from `selRef`
+   *  keeps shift-clicking additive even if two of them land in one tick. */
   const selectCard = (id: ID, additive: boolean) => {
     clearOthers();
     setTimeCard((cur) => (cur === id ? cur : null));
-    if (!additive) { setSel([id]); handlers.onSelect(id); return; }
-    setSel((prev) => {
-      const base = prev.length ? prev : selectedId ? [selectedId] : [];
-      const next = base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
-      handlers.onSelect(next[next.length - 1] ?? null);
-      return next;
-    });
+    if (!additive) { chooseCards([id]); return; }
+    const base = liveSelection();
+    chooseCards(base.includes(id) ? base.filter((x) => x !== id) : [...base, id]);
   };
 
   /* ---------- surface gestures ---------- */
@@ -510,14 +533,13 @@ export function CanvasView({
     }
 
     // Select tool on empty space: marquee.
-    if (!e.shiftKey) { setSel([]); handlers.onSelect(null); clearOthers(); }
+    if (!e.shiftKey) { chooseCards([]); clearOthers(); }
     beginDrag({ kind: 'marquee', from: p, to: p, additive: e.shiftKey }, (d) => {
       if (d.kind !== 'marquee') return;
       const rect = normalise(d.from, d.to);
       if (rect.w < 4 && rect.h < 4) return;
       const caught = cardsIn(live.current.trip, rect).filter((id) => visible.has(id));
-      setSel((prev) => (d.additive ? [...new Set([...prev, ...caught])] : caught));
-      handlers.onSelect(caught[caught.length - 1] ?? null);
+      chooseCards(d.additive ? [...new Set([...selRef.current, ...caught])] : caught);
     });
   };
 
@@ -643,7 +665,7 @@ export function CanvasView({
                 selected={selFrame === f.id}
                 delta={drag?.kind === 'frame' && drag.id === f.id ? frameDelta : null}
                 resizing={drag?.kind === 'resize' && drag.id === f.id ? drag.to : null}
-                onSelect={() => { setSelFrame(f.id); setSel([]); setSelLink(null); setSelSticky(null); handlers.onSelect(null); }}
+                onSelect={() => { setSelFrame(f.id); chooseCards([]); setSelLink(null); setSelSticky(null); }}
                 onGrab={(e) => {
                   const p = screenToWorld(e.clientX, e.clientY);
                   const inside = trip.segments.filter((s) => s.at && contains(f.rect, s.at)).map((s) => s.id);
@@ -709,7 +731,7 @@ export function CanvasView({
                     className="bd__wirehit" d={geom.path} fill="none"
                     onPointerDown={(e) => {
                       e.stopPropagation();
-                      setSelLink(link.id); setSel([]); setSelFrame(null); setSelSticky(null);
+                      setSelLink(link.id); chooseCards([], false); setSelFrame(null); setSelSticky(null);
                     }}
                   />
                   <path
@@ -733,7 +755,7 @@ export function CanvasView({
                 link={link} at={geom.mid}
                 trip={trip} zone={zone}
                 selected={selLink === link.id}
-                onSelect={() => { setSelLink(link.id); setSel([]); }}
+                onSelect={() => { setSelLink(link.id); chooseCards([], false); }}
                 onToggleKind={() => handlers.onPatchLink(link.id, { kind: link.kind === 'travel' ? 'then' : 'travel' })}
                 onDelete={() => { handlers.onUnlink([link.id]); setSelLink(null); }}
               />
@@ -767,7 +789,7 @@ export function CanvasView({
                 delta={drag?.kind === 'sticky' && drag.id === n.id
                   ? { dx: drag.to.x - drag.from.x, dy: drag.to.y - drag.from.y }
                   : (frameDelta && drag?.kind === 'frame' && drag.stickyIds.includes(n.id) ? frameDelta : null)}
-                onSelect={() => { setSelSticky(n.id); setSel([]); setSelLink(null); setSelFrame(null); handlers.onSelect(null); }}
+                onSelect={() => { setSelSticky(n.id); chooseCards([]); setSelLink(null); setSelFrame(null); }}
                 onEdit={() => setEditingSticky(n.id)}
                 onCommit={(text) => { handlers.onPatchSticky(n.id, { text }); setEditingSticky(null); }}
                 onGrab={(e) => {
@@ -944,7 +966,7 @@ export function CanvasView({
               : { x: 0, y: 0, w: 460, h: 320 };
             handlers.onCreateBranch(name, memberIds, branchDraft.ids, rect);
             setBranchDraft(null);
-            setSel([]);
+            chooseCards([], false);
           }}
         />
       )}
