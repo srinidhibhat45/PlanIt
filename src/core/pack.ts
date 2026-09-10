@@ -14,7 +14,7 @@
  *  Everything is reversible; `unpack(pack(trip))` is asserted to be
  *  structurally identical to the original in the test suite. */
 
-import type { Group, ID, Idea, Person, Place, Segment, SegmentKind, SegmentStatus, Trip } from './types';
+import type { Branch, Group, ID, Idea, Person, Place, Segment, SegmentKind, SegmentStatus, Trip } from './types';
 import { MIN } from './time';
 
 const KINDS: SegmentKind[] = [
@@ -55,6 +55,7 @@ export function pack(trip: Trip): Packed {
   const placeKey = new Map<ID, number>(trip.places.map((p, i) => [p.id, i]));
   const personKey = new Map<ID, number>(trip.people.map((p, i) => [p.id, i]));
   const groupKey = new Map<ID, number>(trip.groups.map((g, i) => [g.id, i]));
+  const branchKey = new Map<ID, number>((trip.branches ?? []).map((b, i) => [b.id, i]));
 
   // Intern the strings that repeat: a dozen segments in 'Asia/Kolkata' should
   // say so once, and 'conference' appears on every session.
@@ -89,6 +90,16 @@ export function pack(trip: Trip): Packed {
     B: trip.people.map((p) => tidy({
       n: p.name, hc: p.homeCity, z: zoneIdx(p.homeTimezone), c: p.color,
       e: p.email, i: p.interests, di: p.dietary, mo: p.mobilityNotes, ph: p.phone, no: p.notes,
+      ws: p.windowStart === undefined ? undefined : m(p.windowStart),
+      we: p.windowEnd === undefined ? undefined : m(p.windowEnd),
+      hy: p.homeLat === undefined ? undefined : round6(p.homeLat),
+      hx: p.homeLon === undefined ? undefined : round6(p.homeLon),
+      hd: p.handle,
+    })),
+    F: (trip.branches ?? []).map((b) => tidy({
+      n: b.name, c: b.color,
+      m: b.memberIds.map((x) => personKey.get(x)).filter((x) => x !== undefined),
+      p: refOf(branchKey, b.parentId), no: b.notes, cp: b.collapsed || undefined,
     })),
     C: trip.groups.map((g) => tidy({
       n: g.name, k: GROUP_KINDS.indexOf(g.kind), c: g.color,
@@ -118,6 +129,8 @@ export function pack(trip: Trip): Packed {
       cu: s.currency,
       L: s.locked || undefined,
       cl: s.color,
+      br: refOf(branchKey, s.branchId),
+      ow: refOf(personKey, s.ownerId),
     })),
     E: trip.ideas.map((i) => tidy({
       t: i.title, k: KINDS.indexOf(i.kind), d: i.durationMin,
@@ -169,6 +182,7 @@ export function unpack(p: Packed): Trip {
   const placeId = (i: number) => ord('a', i);
   const personId = (i: number) => ord('b', i);
   const groupId = (i: number) => ord('c', i);
+  const branchId = (i: number) => ord('f', i);
 
   const places: Place[] = (o.A ?? []).map((a: any, i: number) => ({
     id: placeId(i),
@@ -197,6 +211,21 @@ export function unpack(p: Packed): Trip {
     mobilityNotes: b.mo,
     phone: b.ph,
     notes: b.no,
+    windowStart: b.ws === undefined ? undefined : at(b.ws),
+    windowEnd: b.we === undefined ? undefined : at(b.we),
+    homeLat: b.hy,
+    homeLon: b.hx,
+    handle: b.hd,
+  }));
+
+  const branches: Branch[] = (o.F ?? []).map((f: any, i: number) => ({
+    id: branchId(i),
+    name: f.n ?? 'Side trip',
+    color: f.c ?? '#8b7cff',
+    memberIds: (f.m ?? []).map(personId),
+    parentId: f.p === undefined ? undefined : branchId(f.p),
+    notes: f.no,
+    collapsed: f.cp,
   }));
 
   const groups: Group[] = (o.C ?? []).map((c: any, i: number) => ({
@@ -240,6 +269,8 @@ export function unpack(p: Packed): Trip {
     currency: d.cu,
     locked: d.L,
     color: d.cl,
+    branchId: d.br === undefined ? undefined : branchId(d.br),
+    ownerId: d.ow === undefined ? undefined : personId(d.ow),
   }));
 
   const ideas: Idea[] = (o.E ?? []).map((e: any, i: number) => ({
@@ -262,7 +293,7 @@ export function unpack(p: Packed): Trip {
     endDate: o.ed ?? '1970-01-01',
     baseTimezone: o.tz ?? 'UTC',
     currency: o.cu ?? 'USD',
-    places, people, groups, segments, ideas,
+    places, people, groups, segments, branches, ideas,
     updatedAt: o.ua ?? Date.now(),
     schemaVersion: 1,
   };

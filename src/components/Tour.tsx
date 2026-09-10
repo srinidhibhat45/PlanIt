@@ -48,21 +48,25 @@ function steps(trip: Trip): Step[] {
             PlanIt keeps all of it in a single plan you can look at from any angle.
           </p>
           <p className="tour__note">
-            You are looking at a worked example — {n} people flying into Bengaluru for a
-            conference across {days} days. Change anything you like. It saves in this
-            browser only, and nothing is sent anywhere.
+            {n === 0
+              ? 'This trip is empty. Add the people first — everything else hangs off who is coming. It saves in this browser only, and nothing is sent anywhere.'
+              : `You are looking at ${n} ${n === 1 ? 'person' : 'people'} across ${days} ${days === 1 ? 'day' : 'days'}. Change anything you like. It saves in this browser only, and nothing is sent anywhere.`}
           </p>
         </>
       ),
     },
     {
       eyebrow: 'The flow',
-      title: 'Four steps, in this order',
+      title: 'The order that works',
       body: (
         <ol className="tour__flow">
           <li><span>
-            <b>See where everyone is.</b> Open <i>Timeline</i> for the whole group at once,
-            or <i>Day</i> for one day in detail.
+            <b>Add who is coming.</b> Open <i>People</i> and put in each traveller, where
+            they are coming from and when they can be there.
+          </span></li>
+          <li><span>
+            <b>Lay the plan out.</b> The <i>Canvas</i> is the board: days across, hours
+            down, people as lines between the cards.
           </span></li>
           <li><span>
             <b>Fix what cannot happen.</b> PlanIt reads the plan back to you and flags
@@ -77,6 +81,30 @@ function steps(trip: Trip): Step[] {
             person or for the whole trip.
           </span></li>
         </ol>
+      ),
+    },
+    {
+      view: 'canvas',
+      eyebrow: 'Step 2 · Plan',
+      title: 'Canvas — the board everything hangs on',
+      body: (
+        <>
+          <p>
+            Days run across, hours run down, so where a card sits <i>is</i> when it happens.
+            The lines between cards are people: one line carrying four faces means those
+            four go from this to that.
+          </p>
+          <p>
+            Drag a face from the roster along the top onto a card to put that person on it.
+            Drag the dot on a card’s corner onto another card to send everyone on the first
+            card onward to the second. Select a few cards and press <i>Sub-trip</i> to peel
+            that group onto their own track while everyone else carries on.
+          </p>
+          <p className="tour__note">
+            A red dashed line is a journey nobody could make in the time allowed — it says
+            how far, how long it really takes, and by how much you are short.
+          </p>
+        </>
       ),
     },
     {

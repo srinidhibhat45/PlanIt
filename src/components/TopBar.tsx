@@ -5,11 +5,13 @@ import { ClockMenu } from './ClockMenu';
 import { issueSummary } from '../core/schedule';
 import type { Issue } from '../core/types';
 import {
-  IconAgenda, IconBoard, IconDay, IconMap, IconMenu, IconPeople, IconRedo, IconSearch,
-  IconShare, IconSparkle, IconSun, IconMoon, IconTimeline, IconUndo, IconWarn, IconWeek,
+  IconAgenda, IconBoard, IconCanvas, IconDay, IconLeft, IconMap, IconMenu, IconPeople,
+  IconRedo, IconSearch, IconShare, IconSparkle, IconSun, IconMoon, IconTimeline, IconUndo,
+  IconWarn, IconWeek,
 } from './Icons';
 
 export const VIEWS: { id: ViewId; label: string; Icon: (p: { size?: number }) => ReactElement }[] = [
+  { id: 'canvas', label: 'Canvas', Icon: IconCanvas },
   { id: 'timeline', label: 'Timeline', Icon: IconTimeline },
   { id: 'day', label: 'Day', Icon: IconDay },
   { id: 'week', label: 'Trip', Icon: IconWeek },
@@ -22,7 +24,7 @@ export const VIEWS: { id: ViewId; label: string; Icon: (p: { size?: number }) =>
 export function TopBar({
   trip, view, clock, issues, canUndo, canRedo, theme, railOpen,
   onView, onClock, onUndo, onRedo, onShare, onTheme, onToggleRail, onOpenIssues, onOpenPalette,
-  onOpenTour,
+  onOpenTour, onExit,
 }: {
   trip: Trip; view: ViewId; clock: ClockMode; issues: Issue[];
   canUndo: boolean; canRedo: boolean; theme: 'dark' | 'light'; railOpen: boolean;
@@ -32,6 +34,8 @@ export function TopBar({
   onShare: () => void; onTheme: () => void;
   onToggleRail: () => void; onOpenIssues: () => void; onOpenPalette: () => void;
   onOpenTour: () => void;
+  /** Back to the library of trips. */
+  onExit: () => void;
 }) {
   const s = issueSummary(issues);
 
@@ -44,6 +48,12 @@ export function TopBar({
           aria-expanded={railOpen}
         >
           <IconMenu />
+        </button>
+        <button
+          className="btn btn--icon btn--ghost" onClick={onExit}
+          aria-label="Back to all my trips" title="All my trips"
+        >
+          <IconLeft />
         </button>
         <span className="brand__mark" aria-hidden="true">P</span>
         <span style={{ minWidth: 0 }}>

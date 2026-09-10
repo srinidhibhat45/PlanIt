@@ -51,4 +51,5 @@ export const IconZoomIn = (p: P) => <Svg {...p}><circle cx="11" cy="11" r="7" />
 export const IconZoomOut = (p: P) => <Svg {...p}><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5M8 11h6" /></Svg>;
 export const IconTarget = (p: P) => <Svg {...p}><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="4" /><path d="M12 1v3M12 20v3M1 12h3M20 12h3" /></Svg>;
 export const IconGrab = (p: P) => <Svg {...p}><circle cx="9" cy="6" r="1.4" /><circle cx="15" cy="6" r="1.4" /><circle cx="9" cy="12" r="1.4" /><circle cx="15" cy="12" r="1.4" /><circle cx="9" cy="18" r="1.4" /><circle cx="15" cy="18" r="1.4" /></Svg>;
+export const IconCanvas = (p: P) => <Svg {...p}><rect x="2.5" y="3" width="7" height="6" rx="1.5" /><rect x="14.5" y="9" width="7" height="6" rx="1.5" /><rect x="6" y="16" width="7" height="5" rx="1.5" /><path d="M9.5 6h2.2a1.8 1.8 0 0 1 1.8 1.8V12M14.5 12h-3.7a1.8 1.8 0 0 0-1.8 1.8V16" /></Svg>;
 export const IconSparkle = (p: P) => <Svg {...p}><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z" /><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16Z" /></Svg>;

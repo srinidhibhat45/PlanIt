@@ -193,8 +193,29 @@ export function dayShift(epoch: Epoch, a: Zone, b: Zone): number {
   return ka < kb ? 1 : -1;
 }
 
+/** Zones some platforms still report under their pre-1993 names. They behave
+ *  identically, but showing someone "Asia/Calcutta" for a trip to Bengaluru
+ *  reads like a bug, and two spellings of one zone break de-duplication. */
+const ZONE_ALIASES: Record<string, Zone> = {
+  'Asia/Calcutta': 'Asia/Kolkata',
+  'Asia/Katmandu': 'Asia/Kathmandu',
+  'Asia/Saigon': 'Asia/Ho_Chi_Minh',
+  'Asia/Rangoon': 'Asia/Yangon',
+  'Europe/Kiev': 'Europe/Kyiv',
+  'America/Buenos_Aires': 'America/Argentina/Buenos_Aires',
+  'Australia/Canberra': 'Australia/Sydney',
+  'US/Eastern': 'America/New_York',
+  'US/Central': 'America/Chicago',
+  'US/Mountain': 'America/Denver',
+  'US/Pacific': 'America/Los_Angeles',
+};
+
+export function canonicalZone(zone: Zone): Zone {
+  return ZONE_ALIASES[zone] ?? zone;
+}
+
 export function deviceZone(): Zone {
-  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; }
+  try { return canonicalZone(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'); }
   catch { return 'UTC'; }
 }
 

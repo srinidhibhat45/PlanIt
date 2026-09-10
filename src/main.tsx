@@ -5,10 +5,11 @@ import './styles/tokens.css';
 import './styles/base.css';
 import './styles/app.css';
 import './styles/views.css';
-import App from './App';
+import './styles/plan.css';
+import Root from './Root';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <Root />
   </StrictMode>,
 );

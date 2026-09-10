@@ -8,6 +8,10 @@ import type { ViewId } from '../core/types';
 import { IconClose } from './Icons';
 
 const HINTS: Record<ViewId, { lead: string; rest: string }> = {
+  canvas: {
+    lead: 'The board.',
+    rest: 'Days run across, hours run down. Lines are people: drag a face from the top onto a card to add them, drag a card’s dot onto another to send that group onward. A red line is a journey nobody could make in the time allowed.',
+  },
   timeline: {
     lead: 'Everyone at once.',
     rest: 'One lane per person, time running left to right. Drag a block to move it, drag its edges to resize, drag it into another lane to reassign it.',

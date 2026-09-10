@@ -108,10 +108,23 @@ and the same machinery runs a forty-person tour.
 
 ## What it does
 
-**Seven views of the same plan**
+**A library of trips.** The first screen lists every trip in this browser — start
+a new one, duplicate an old one, import a JSON backup, or open the worked
+example. Each trip carries its own people, places, plan and sub-trips; nothing
+is shared between them.
+
+**People are the unit.** A traveller is a first-class entity: name, contact,
+where they are travelling from (searched, so it comes with coordinates and a
+time zone), the window when they can actually be there, interests, dietary and
+mobility notes. Every one of those feeds the analyser. Each person has their own
+itinerary inside the shared plan, their own clock, and a link you can send that
+opens on their days alone.
+
+**Eight views of the same plan**
 
 | View | For |
 |---|---|
+| **Canvas** | The board. Days run across, hours run down, so where a card sits *is* when it happens. Lines between cards are people. |
 | **Timeline** | Swimlanes per person, group, place or type. The view for spotting who is where. Drag to move, drag edges to resize, drag across lanes to reassign. Stretches where someone is not on the trip yet are shaded and labelled with the date they arrive, so a blank lane is never ambiguous. |
 | **Day** | Hours down the side, a column per person. "Where do I need to be, and when?" |
 | **Trip** | The whole trip as a day grid. Coarse moves and empty-evening spotting. |
@@ -119,6 +132,50 @@ and the same machinery runs a forty-person tour.
 | **Map** | Real road routes, traffic-adjusted durations, stops numbered in order. |
 | **People** | Roster: arrivals, departures, hotel, interests, daily load. |
 | **Ideas** | Backlog of things people want to do, with interest voting. Drop one on a day and it finds a free evening slot. |
+
+### The canvas
+
+The centrepiece, and the view that answers *"what does this trip actually look
+like?"*. It is a flow chart drawn on a calendar:
+
+- **Days across, hours down.** A card's position is its time. Dragging one is
+  rescheduling it, across days as readily as across hours, so there is no
+  separate layout to fall out of step with the plan.
+- **Edges are people, bundled.** Four travellers making the same hop is *one*
+  thick line carrying four faces, not four lines. That is the difference
+  between a diagram and a hairball.
+- **A red dashed line is a journey nobody could make.** The chip on it says how
+  far, how long the quickest route really takes, and by how much you are short.
+- **The roster runs along the top.** Who is present on each day, who arrives
+  that day, and how loaded they are. Drag a face onto a card to put that person
+  on it; hover one to light up their path and shade their free windows.
+- **Drag a card's corner dot onto another card** to send everyone on the first
+  card onward to the second — the gesture for "these three then go to the
+  workshop".
+- **Overlapping cards fan rather than divide.** Four concurrent red-eyes split
+  evenly would be 58 px each; staggered, every one stays wide enough to read its
+  flight number.
+
+### Sub-trips
+
+Half the group goes to the beach while the rest stay for the second day of
+talks. Select those cards, press **Sub-trip**, choose who peels off: they move
+onto their own tinted track inside the same day column, which widens to make
+room. Everyone else carries on down the main line, and both are visible at once.
+
+Sub-trips nest — a side trip can itself fork — and dissolving one puts its
+blocks back on the shared timeline rather than deleting them. The analyser
+checks them specifically: whether a member is still booked on the main timeline
+while supposedly away, and whether the group can physically get back for
+whatever everybody does next.
+
+### Places
+
+Search by name against a built-in gazetteer that answers on the first keystroke
+and works with no network; live OpenStreetMap results are merged in behind it
+when they arrive. Or paste a **Google Maps or OpenStreetMap link** — or bare
+coordinates — and the place is pulled straight out of it, time zone inferred
+from where it is. Places sit in a shelf you can drag onto any day.
 
 **Time zones, done properly.** Every instant is stored as UTC. A segment
 records the zone it physically happens in. You choose what the whole UI renders
@@ -135,12 +192,24 @@ Delhi at 09:15 is not Goa at 09:15. Airport check-in and deplaning overheads are
 added separately. The UI always says which number came from a router and which
 from the model — it is an estimate, not a live traffic feed.
 
-**An analyser that reads the plan back to you.** Double bookings, journeys that
-do not fit the gap, items scheduled before someone lands or after they leave,
-short nights, long days with no meal break, unbooked journeys, free evenings
-matched against people's stated interests, and airports with no flight between
-them. Repetitive findings roll up per person per day so the real problems stay
-visible.
+**An analyser that reads the plan back to you.** Double bookings, items
+scheduled before someone lands or after they leave or outside the window they
+gave, short nights, long days with no meal break, unbooked journeys, free
+evenings matched against people's stated interests, and both kinds of sub-trip
+mistake. Repetitive findings roll up per person per day so the real problems
+stay visible.
+
+Journeys get three distinct verdicts, because they call for three different
+fixes:
+
+| Verdict | Means | Example |
+|---|---|---|
+| **Tight** | The cab is slow. Leave earlier, or allow more time. | Taj West End → Koshy's, 2.5 km, two minutes short |
+| **Needs a flight** | Nothing on the ground closes the gap, flying does, and no flight is on the plan. | Delhi → Bengaluru with eight hours and no booking |
+| **Impossible** | The quickest conceivable route still does not fit. Move something. | Bengaluru → Goa, 560 km, three hours |
+
+The distinction is held to a real margin on purpose. Calling a two-minute
+shortfall "impossible" teaches people to ignore the ones that are.
 
 **Sharing without a backend.** The entire plan is packed and compressed into the
 URL fragment. Fragments are never sent to a server, so a link is private to
@@ -215,17 +284,26 @@ src/
     travel.ts      distance, routing adapter, traffic model
     schedule.ts    derivations and the analyser
     layout.ts      lane packing and scale maths
+    canvas.ts      the node graph: columns, tracks, cards, bundled edges
+    branch.ts      sub-trips — spans, nesting, split and rejoin points
+    geo.ts         place search, map-link parsing, timezone from coordinates
+    library.ts     the trip library, migration and duplication
     store.ts       reducer, undo/redo, persistence
     ics.ts         RFC 5545 export
     pack.ts        compact wire format for share links
     share.ts       link encoding, JSON import/export
     clock.ts       which zone the UI renders in
   components/    views and chrome
+    CanvasView.tsx the board
+    TripsView.tsx  the library landing page
+    PersonSheet.tsx  add or edit a traveller
+    PlaceSearch.tsx  search, paste a map link, or type coordinates
     Tour.tsx       the first-run walkthrough
     ViewHint.tsx   the one-line description under each view's toolbar
+  Root.tsx       routing between the library and one open trip
   hooks/         drag machine, toasts, hotkeys, focus trap
   data/          the worked conference example
-test/run.ts      127 assertions, no framework
+test/run.ts      205 assertions, no framework
 ```
 
 **Invariants worth knowing**
@@ -236,6 +314,17 @@ test/run.ts      127 assertions, no framework
   is what the keyboard path uses.
 - Never transition the `background` shorthand — it strands elements on a stale
   colour when a theme token changes. Use `background-color`.
+- **A canvas card's position is its time, and nothing else.** There is no stored
+  layout: `buildCanvas` derives every rectangle from the segment's start, end
+  and branch. `timeAt` is the exact inverse of `yFor`, which is what lets a drag
+  be a reschedule rather than a drawing operation.
+- **Drag tracking is wired up synchronously from `pointerdown`,** not from an
+  effect. An effect only runs after React commits, and a fast gesture can land
+  its first move before that — which silently drops the drag.
+- **Do not name a plain-`div` overlay `.modal`.** The older dialogs here are real
+  `<dialog class="modal">` elements, and a bare `.modal { display: grid }`
+  outranks the user-agent rule that hides a closed one, so every dialog in the
+  app renders at once. The new sheets use `.sheet`.
 - **A block never renders a line it has no room for.** Blocks have a height set
   by the grid, not by their contents, and text that overflows a fixed-height box
   does not clip politely — it paints over the line below it and outside the
@@ -246,6 +335,13 @@ test/run.ts      127 assertions, no framework
 
 ## State
 
-Autosaves to `localStorage`. `npm run dev` starts from the example; delete
-`planit.trip.v1` to reset. Nothing leaves the browser except OSRM route lookups
-(coordinates only) and OpenStreetMap tile requests.
+Autosaves to `localStorage`, one key per trip (`planit.trip.v2.<id>`) plus a
+small index (`planit.library.v2`), so a large trip is not rewritten every time
+an unrelated one is touched and a corrupt trip loses one trip rather than all of
+them. A plan saved by the earlier single-trip build is adopted into the library
+once, automatically. Clear those keys to reset.
+
+Nothing leaves the browser except OSRM route lookups, OpenStreetMap tiles, and
+Nominatim place searches — coordinates and search terms only. All three fail
+silently: the offline estimate, a blank tile and the built-in gazetteer are
+always the floor, so the app works with the network switched off.

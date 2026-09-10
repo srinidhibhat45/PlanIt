@@ -1,19 +1,29 @@
-/** Roster: who is coming, when they land, where they sleep, what they like. */
+/** Roster: who is coming, when they land, where they sleep, what they like.
+ *
+ *  Each card is one person's whole involvement in the trip — their own
+ *  itinerary, their own clock, their own free evenings — because that is the
+ *  unit people actually think in when they ask "what am I doing on Thursday". */
 
 import { useMemo } from 'react';
-import type { ClockMode, ID, Trip } from '../core/types';
+import type { ClockMode, ID, Issue, Trip } from '../core/types';
 import { DAY, MIN, dateKey, eachDay, fmtDate, fmtDuration, fmtTime, zoneAbbr, zoneCity } from '../core/time';
 import { bookendsFor, segmentsFor } from '../core/schedule';
 import { axisZone } from '../core/clock';
+import { branchMembers } from '../core/branch';
 import { initials } from './SegmentChrome';
+import { IconPlus, IconShare, IconWarn } from './Icons';
 
 export function PeopleView({
-  trip, clock, onFocusPerson, onExport, onOpenPerson, focusPersonId,
+  trip, clock, onFocusPerson, onExport, onOpenPerson, focusPersonId, issues,
+  onAddPerson, onEditPerson, onSharePerson,
 }: {
-  trip: Trip; clock: ClockMode; focusPersonId: ID | null;
+  trip: Trip; clock: ClockMode; focusPersonId: ID | null; issues: Issue[];
   onFocusPerson: (id: ID | null) => void;
   onExport: (id: ID) => void;
   onOpenPerson: (id: ID) => void;
+  onAddPerson: () => void;
+  onEditPerson: (id: ID) => void;
+  onSharePerson: (id: ID) => void;
 }) {
   const zone = axisZone(clock, trip);
 
@@ -24,8 +34,25 @@ export function PeopleView({
     return eachDay(lo, hi, zone);
   }, [trip.segments, zone]);
 
+  const issuesByPerson = useMemo(() => {
+    const map = new Map<ID, Issue[]>();
+    for (const i of issues) for (const pid of i.personIds) map.set(pid, [...(map.get(pid) ?? []), i]);
+    return map;
+  }, [issues]);
+
   return (
     <div className="people">
+      <div className="people__bar">
+        <p className="people__count">
+          {trip.people.length === 0
+            ? 'Nobody on the trip yet'
+            : `${trip.people.length} ${trip.people.length === 1 ? 'person' : 'people'}`}
+        </p>
+        <button className="btn btn--sm btn--primary" onClick={onAddPerson}>
+          <IconPlus size={14} /> Add someone
+        </button>
+      </div>
+
       {trip.people.map((person) => {
         const segs = segmentsFor(person.id, trip);
         const { arrival, departure } = bookendsFor(person.id, trip);
@@ -41,6 +68,10 @@ export function PeopleView({
         const maxMins = Math.max(60, ...busyByDay.map((d) => d.mins));
         const offset = zoneAbbr(Date.now(), person.homeTimezone);
         const isFocused = focusPersonId === person.id;
+        const mine = issuesByPerson.get(person.id) ?? [];
+        const blocking = mine.filter((i) => i.severity === 'error').length;
+        const theirBranches = trip.branches.filter((b) => branchMembers(trip, b).includes(person.id));
+        const owned = segs.filter((s) => s.ownerId === person.id).length;
 
         return (
           <article className="panel pcard" key={person.id} aria-labelledby={`p-${person.id}`}>
@@ -54,7 +85,12 @@ export function PeopleView({
                   {person.homeCity} · {zoneCity(person.homeTimezone)} ({offset})
                 </p>
               </div>
-              <div className="row" style={{ gap: 4 }}>
+              <div className="row" style={{ gap: 4, alignItems: 'center' }}>
+                {blocking > 0 && (
+                  <span className="chip chip--danger" title={mine.filter((i) => i.severity === 'error').map((i) => i.title).join('; ')}>
+                    <IconWarn size={11} /> {blocking}
+                  </span>
+                )}
                 {track && <span className="chip" style={{ color: track.color, borderColor: track.color }}>{track.name.split(' · ')[0]}</span>}
               </div>
             </header>
@@ -80,8 +116,32 @@ export function PeopleView({
                 ) : <span style={{ color: 'var(--ink-3)' }}>Not set</span>}
               </dd>
 
+              <dt>Available</dt>
+              <dd>
+                {person.windowStart === undefined && person.windowEnd === undefined
+                  ? <span style={{ color: 'var(--ink-3)' }}>Whole trip</span>
+                  : (
+                    <span className="mono">
+                      {person.windowStart !== undefined ? `${fmtDate(person.windowStart, zone, 'short')} ${fmtTime(person.windowStart, { zone })}` : 'trip start'}
+                      {' → '}
+                      {person.windowEnd !== undefined ? `${fmtDate(person.windowEnd, zone, 'short')} ${fmtTime(person.windowEnd, { zone })}` : 'trip end'}
+                    </span>
+                  )}
+              </dd>
+
               <dt>Hotel</dt>
               <dd>{hotelPlace?.name ?? hotel?.name ?? '—'}</dd>
+
+              {theirBranches.length > 0 && (
+                <>
+                  <dt>Sub-trips</dt>
+                  <dd className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
+                    {theirBranches.map((b) => (
+                      <span key={b.id} className="chip" style={{ color: b.color, borderColor: b.color }}>{b.name}</span>
+                    ))}
+                  </dd>
+                </>
+              )}
 
               <dt>Likes</dt>
               <dd>{person.interests.join(', ') || '—'}</dd>
@@ -108,6 +168,7 @@ export function PeopleView({
               </div>
               <p className="pcard__meta" style={{ marginTop: 4 }}>
                 {segs.length} items · {fmtDuration(segs.reduce((a, s) => a + (s.end - s.start), 0))} total
+                {owned > 0 && ` · ${owned} added by them`}
               </p>
             </div>
 
@@ -121,9 +182,18 @@ export function PeopleView({
                 {isFocused ? 'Showing only them' : 'Focus on them'}
               </button>
               <button type="button" className="btn btn--sm" onClick={() => onOpenPerson(person.id)}>
-                Their timeline
+                Their itinerary
               </button>
-              <button type="button" className="btn btn--sm" onClick={() => onExport(person.id)}>
+              <button type="button" className="btn btn--sm" onClick={() => onEditPerson(person.id)}>
+                Edit details
+              </button>
+              <button
+                type="button" className="btn btn--sm" onClick={() => onSharePerson(person.id)}
+                title="Send them a link that opens on just their own itinerary"
+              >
+                <IconShare size={13} /> Give them a link
+              </button>
+              <button type="button" className="btn btn--sm btn--ghost" onClick={() => onExport(person.id)}>
                 Calendar file
               </button>
             </div>
@@ -134,7 +204,14 @@ export function PeopleView({
       {trip.people.length === 0 && (
         <div className="empty">
           <p className="empty__title">No one on the trip yet</p>
-          <p className="empty__body">Add travellers from the left rail, then assign them to blocks.</p>
+          <p className="empty__body">
+            Add everyone coming, with where they are travelling from and when they can be there.
+            The canvas then knows whose day it is drawing, and can tell you when a plan asks
+            somebody to be in two places at once.
+          </p>
+          <button className="btn btn--primary" onClick={onAddPerson}>
+            <IconPlus size={15} /> Add the first person
+          </button>
         </div>
       )}
     </div>

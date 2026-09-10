@@ -1,7 +1,7 @@
 /** Trip state: a reducer with linear undo/redo, debounced persistence and a
  *  tiny pub/sub so any component can subscribe without a state library. */
 
-import type { ID, Idea, Group, Person, Place, Segment, Trip } from './types';
+import type { Branch, ID, Idea, Group, Person, Place, Segment, Trip } from './types';
 import { MIN, snap } from './time';
 
 export type Action =
@@ -28,6 +28,14 @@ export type Action =
   | { type: 'idea/patch'; id: ID; patch: Partial<Idea> }
   | { type: 'idea/delete'; id: ID }
   | { type: 'idea/promote'; id: ID; start: number; timezone: string }
+  | { type: 'branch/add'; branch: Branch; segmentIds?: ID[] }
+  | { type: 'branch/patch'; id: ID; patch: Partial<Branch> }
+  /** `keep` moves the branch's segments up to its parent; otherwise they are
+   *  deleted along with it. */
+  | { type: 'branch/delete'; id: ID; keep: boolean }
+  | { type: 'branch/set-members'; id: ID; memberIds: ID[]; syncSegments: boolean }
+  | { type: 'segment/set-branch'; ids: ID[]; branchId?: ID }
+  | { type: 'segments/add'; segments: Segment[]; places?: Place[]; label?: string }
   | { type: 'history/undo' }
   | { type: 'history/redo' };
 
@@ -95,6 +103,13 @@ function labelFor(a: Action, before: Trip): string {
     case 'segment/patch': return a.label ?? `Edited “${seg(a.id)}”`;
     case 'segment/assign': return `Changed attendees on “${seg(a.id)}”`;
     case 'idea/promote': return 'Scheduled an idea';
+    case 'branch/add': return `Created the sub-trip “${a.branch.name}”`;
+    case 'branch/delete': return a.keep ? 'Dissolved a sub-trip' : 'Deleted a sub-trip';
+    case 'branch/patch': return 'Edited a sub-trip';
+    case 'branch/set-members': return 'Changed who is on a sub-trip';
+    case 'segment/set-branch':
+      return a.branchId ? 'Moved into a sub-trip' : 'Moved back to the main timeline';
+    case 'segments/add': return a.label ?? `Added ${a.segments.length} blocks`;
     case 'trip/replace': return a.label ?? 'Loaded a trip';
     default: return ('label' in a && a.label) || 'Change';
   }
@@ -168,7 +183,12 @@ function applyToTrip(trip: Trip, a: Action): Trip {
         ...trip,
         people: trip.people.filter((p) => p.id !== a.id),
         groups: trip.groups.map((g) => ({ ...g, memberIds: g.memberIds.filter((m) => m !== a.id) })),
-        segments: trip.segments.map((s) => ({ ...s, attendeeIds: s.attendeeIds.filter((x) => x !== a.id) })),
+        branches: trip.branches.map((b) => ({ ...b, memberIds: b.memberIds.filter((m) => m !== a.id) })),
+        segments: trip.segments.map((s) => ({
+          ...s,
+          attendeeIds: s.attendeeIds.filter((x) => x !== a.id),
+          ownerId: s.ownerId === a.id ? undefined : s.ownerId,
+        })),
       };
 
     case 'place/add': return { ...trip, places: [...trip.places, a.place] };
@@ -202,6 +222,63 @@ function applyToTrip(trip: Trip, a: Action): Trip {
       return { ...trip, ideas: trip.ideas.map((i) => (i.id === a.id ? { ...i, ...a.patch } : i)) };
     case 'idea/delete':
       return { ...trip, ideas: trip.ideas.filter((i) => i.id !== a.id) };
+
+    case 'branch/add': {
+      const ids = new Set(a.segmentIds ?? []);
+      return {
+        ...trip,
+        branches: [...trip.branches, a.branch],
+        segments: ids.size
+          ? trip.segments.map((s) => (ids.has(s.id) ? { ...s, branchId: a.branch.id } : s))
+          : trip.segments,
+      };
+    }
+
+    case 'branch/patch':
+      return { ...trip, branches: trip.branches.map((b) => (b.id === a.id ? { ...b, ...a.patch } : b)) };
+
+    case 'branch/delete': {
+      const doomed = trip.branches.find((b) => b.id === a.id);
+      if (!doomed) return trip;
+      // Children are re-parented rather than orphaned, so a nested side trip
+      // survives its parent being dissolved.
+      const branches = trip.branches
+        .filter((b) => b.id !== a.id)
+        .map((b) => (b.parentId === a.id ? { ...b, parentId: doomed.parentId } : b));
+      return {
+        ...trip,
+        branches,
+        segments: a.keep
+          ? trip.segments.map((s) => (s.branchId === a.id ? { ...s, branchId: doomed.parentId } : s))
+          : trip.segments.filter((s) => s.branchId !== a.id),
+      };
+    }
+
+    case 'branch/set-members': {
+      const branch = trip.branches.find((b) => b.id === a.id);
+      if (!branch) return trip;
+      const next = { ...trip, branches: trip.branches.map((b) => (b.id === a.id ? { ...b, memberIds: a.memberIds } : b)) };
+      if (!a.syncSegments) return next;
+      // Membership is the intent; pushing it onto the branch's own segments is
+      // what makes adding someone to a side trip actually put them on it.
+      return {
+        ...next,
+        segments: next.segments.map((s) =>
+          s.branchId === a.id ? { ...s, everyone: false, attendeeIds: a.memberIds } : s),
+      };
+    }
+
+    case 'segment/set-branch': {
+      const ids = new Set(a.ids);
+      return { ...trip, segments: trip.segments.map((s) => (ids.has(s.id) ? { ...s, branchId: a.branchId } : s)) };
+    }
+
+    case 'segments/add':
+      return {
+        ...trip,
+        places: a.places?.length ? [...trip.places, ...a.places] : trip.places,
+        segments: [...trip.segments, ...a.segments],
+      };
 
     case 'idea/promote': {
       const idea = trip.ideas.find((i) => i.id === a.id);

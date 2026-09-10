@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type {
-  ClockMode, Density, Filters, ID, LaneMode, Segment, ThemeMode, Trip, ViewId,
+  ClockMode, Density, Filters, ID, LaneMode, Person, Segment, ThemeMode, Trip, ViewId,
 } from './core/types';
 import { DAY, MIN, addDays, dateKey, dateKeyToEpoch, eachDay, fmtDate } from './core/time';
 import { analyse, applyFilters, attendeesOf, issueSummary } from './core/schedule';
@@ -8,7 +8,10 @@ import { ZOOMS, KIND_LABEL } from './core/layout';
 import { axisZone } from './core/clock';
 import { downloadIcs } from './core/ics';
 import { clearShareFromLocation, readShareFromLocation, exportJson } from './core/share';
-import { initialState, loadPrefs, loadTrip, reducer, saveTrip, savePrefs, uid } from './core/store';
+import { initialState, loadPrefs, reducer, savePrefs, uid } from './core/store';
+import { writeTrip } from './core/library';
+import { makeBranch } from './core/library';
+import { nextBranchColor } from './core/branch';
 import { conferenceTrip } from './data/conference';
 import { useAnnouncer, useHotkeys, useIsMobile, useNow, usePersistedState, useToasts } from './hooks/useUi';
 
@@ -22,6 +25,8 @@ import { AgendaView, agendaText } from './components/AgendaView';
 // Leaflet and its tiles are only needed on the map, so they load on demand.
 const MapView = lazy(() => import('./components/MapView').then((m) => ({ default: m.MapView })));
 import { PeopleView } from './components/PeopleView';
+import { PersonSheet } from './components/PersonSheet';
+import { CanvasView, type CanvasHandlers } from './components/CanvasView';
 import { BoardView } from './components/BoardView';
 import { CommandPalette, type Command } from './components/CommandPalette';
 import { ShareDialog } from './components/ShareDialog';
@@ -36,22 +41,31 @@ interface Prefs {
 }
 
 const DEFAULT_PREFS: Prefs = {
-  view: 'timeline', laneMode: 'person', density: 'comfortable', theme: 'dark',
+  view: 'canvas', laneMode: 'person', density: 'comfortable', theme: 'dark',
   zoomIndex: 3, hourHeight: 62, contrast: 'normal',
 };
 
 const EMPTY_FILTERS: Filters = {
-  personIds: [], groupIds: [], kinds: [], tags: [], query: '', hideCancelled: false,
+  personIds: [], groupIds: [], kinds: [], tags: [], query: '', hideCancelled: false, branchIds: [],
 };
 
-export default function App() {
+export default function App({
+  tripId, initialTrip, onExit, onSaved,
+}: {
+  /** Null when the plan came from a share link rather than the library. */
+  tripId: ID | null;
+  initialTrip: Trip | null;
+  onExit: () => void;
+  /** Lets the library page refresh its cards after a save. */
+  onSaved: () => void;
+}) {
   /* ---------- boot ---------- */
   const boot = useMemo<{ trip: Trip; readOnly: boolean; focus?: ID }>(() => {
     const shared = readShareFromLocation();
     if (shared) return { trip: shared.trip, readOnly: shared.mode === 'view', focus: shared.focus as ID | undefined };
-    const saved = loadTrip();
-    return { trip: saved ?? conferenceTrip(), readOnly: false };
-  }, []);
+    if (initialTrip) return { trip: initialTrip, readOnly: false };
+    return { trip: conferenceTrip(), readOnly: false };
+  }, [initialTrip]);
 
   const [state, dispatch] = useReducer(reducer, boot.trip, initialState);
   const trip = state.present;
@@ -76,6 +90,8 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  /** 'new' opens a blank sheet; an id opens that person's. */
+  const [personSheet, setPersonSheet] = useState<ID | 'new' | null>(null);
   // The walkthrough opens by itself exactly once, and only for someone who
   // arrived at the app rather than at somebody else's shared link.
   const [tourOpen, setTourOpen] = useState(() => !boot.readOnly && !hasSeenTour());
@@ -140,12 +156,14 @@ export default function App() {
     root.dataset.contrast = prefs.contrast;
   }, [prefs.theme, prefs.density, prefs.contrast]);
 
-  /* ---------- persistence ---------- */
+  /* ---------- persistence ----------
+     A trip opened from a share link has no home in the library until someone
+     asks for one, so it is deliberately not written here. */
   useEffect(() => {
-    if (readOnly) return;
-    const h = window.setTimeout(() => saveTrip(trip), 400);
+    if (readOnly || !tripId) return;
+    const h = window.setTimeout(() => { writeTrip(trip); onSaved(); }, 400);
     return () => clearTimeout(h);
-  }, [trip, readOnly]);
+  }, [trip, readOnly, tripId, onSaved]);
 
   /* ---------- derived ---------- */
   const issues = useMemo(() => analyse(trip), [trip]);
@@ -220,6 +238,119 @@ export default function App() {
     setSelectedId(null);
     push(`Deleted “${seg?.title ?? 'block'}”.`, { action: { label: 'Undo', run: () => dispatch({ type: 'history/undo' }) } });
   }), [guard, trip.segments, push]);
+
+  /* ---------- people ---------- */
+
+  const savePerson = useCallback((person: Person) => guard(() => {
+    const exists = trip.people.some((p) => p.id === person.id);
+    dispatch(exists
+      ? { type: 'person/patch', id: person.id, patch: person }
+      : { type: 'person/add', person });
+    setPersonSheet(null);
+    push(exists ? `Saved ${person.name}.` : `${person.name} added to the trip.`, { tone: 'ok' });
+  }), [guard, trip.people, push]);
+
+  const removePerson = useCallback((id: ID) => guard(() => {
+    const person = trip.people.find((p) => p.id === id);
+    dispatch({ type: 'person/delete', id });
+    setPersonSheet(null);
+    if (focusPersonId === id) setFocusPersonId(null);
+    push(`${person?.name ?? 'They'} removed from the trip.`, {
+      action: { label: 'Undo', run: () => dispatch({ type: 'history/undo' }) },
+    });
+  }), [guard, trip.people, focusPersonId, push]);
+
+  /* ---------- canvas ---------- */
+
+  const canvasHandlers = useMemo<CanvasHandlers>(() => ({
+    onSelect: (id) => setSelectedId(id),
+
+    onMove: (id, start, branchId) => guard(() => {
+      const seg = trip.segments.find((s) => s.id === id);
+      if (!seg) return;
+      if (seg.locked) {
+        push(`“${seg.title}” is locked. Unlock it in the details panel to move it.`);
+        return;
+      }
+      dispatch({ type: 'segment/set-time', id, start, end: start + (seg.end - seg.start) });
+      if ((seg.branchId ?? undefined) !== branchId) {
+        dispatch({ type: 'segment/set-branch', ids: [id], branchId });
+      }
+    }),
+
+    onCreate: (draft, place) => guard(() => {
+      // A place dragged in may be brand new, in which case it has to land in
+      // the trip in the same change as the block that points at it.
+      const seg: Segment = {
+        id: uid('seg'),
+        title: draft.title ?? 'New block',
+        kind: draft.kind ?? 'activity',
+        start: draft.start,
+        end: draft.end,
+        timezone: place?.timezone ?? trip.baseTimezone,
+        placeId: draft.placeId ?? place?.id,
+        attendeeIds: focusPersonId ? [focusPersonId] : [],
+        groupIds: [],
+        branchId: draft.branchId,
+        status: 'tentative',
+        tags: [],
+      };
+      const isNewPlace = !!place && !trip.places.some((p) => p.id === place.id);
+      dispatch({
+        type: 'segments/add',
+        segments: [seg],
+        places: isNewPlace ? [place] : undefined,
+        label: `Added “${seg.title}”`,
+      });
+      setSelectedId(seg.id);
+    }),
+
+    onConnect: (fromId, toId) => guard(() => {
+      const from = trip.segments.find((s) => s.id === fromId);
+      const to = trip.segments.find((s) => s.id === toId);
+      if (!from || !to) return;
+      const incoming = attendeesOf(from, trip);
+      const already = new Set(attendeesOf(to, trip));
+      const added = incoming.filter((p) => !already.has(p));
+      if (!added.length) {
+        push(`Everyone on “${from.title}” is already on “${to.title}”.`);
+        return;
+      }
+      for (const personId of added) dispatch({ type: 'segment/assign', id: toId, personId, on: true });
+      push(
+        `${added.length} ${added.length === 1 ? 'person' : 'people'} carried over to “${to.title}”.`,
+        { tone: 'ok', action: { label: 'Undo', run: () => added.forEach(() => dispatch({ type: 'history/undo' })) } },
+      );
+    }),
+
+    onAssign: (segmentId, personId, on) =>
+      guard(() => dispatch({ type: 'segment/assign', id: segmentId, personId, on })),
+
+    onCreateBranch: (name, memberIds, segmentIds) => guard(() => {
+      const branch = makeBranch(name, memberIds, nextBranchColor(trip));
+      dispatch({ type: 'branch/add', branch, segmentIds });
+      dispatch({ type: 'branch/set-members', id: branch.id, memberIds, syncSegments: true });
+      push(`“${branch.name}” split off with ${memberIds.length} ${memberIds.length === 1 ? 'person' : 'people'}.`, { tone: 'ok' });
+    }),
+
+    onSetBranch: (ids, branchId) => guard(() => {
+      if (!ids.length) return;
+      dispatch({ type: 'segment/set-branch', ids, branchId });
+    }),
+
+    onDeleteBranch: (id, keep) => guard(() => {
+      const branch = trip.branches.find((b) => b.id === id);
+      dispatch({ type: 'branch/delete', id, keep });
+      push(
+        keep
+          ? `“${branch?.name ?? 'Sub-trip'}” dissolved — its blocks are back on the main timeline.`
+          : `“${branch?.name ?? 'Sub-trip'}” deleted.`,
+        { action: { label: 'Undo', run: () => dispatch({ type: 'history/undo' }) } },
+      );
+    }),
+
+    onAnnounce: announce,
+  }), [guard, trip, focusPersonId, push, announce]);
 
   const makeEditable = useCallback(() => {
     setReadOnly(false);
@@ -327,6 +458,8 @@ export default function App() {
       { id: 'clock-base', group: 'Clock', label: 'Times in trip time', run: () => setClock({ type: 'base' }) },
       { id: 'clock-device', group: 'Clock', label: 'Times on my device clock', run: () => setClock({ type: 'device' }) },
       { id: 'add', group: 'Edit', label: 'Add a block', hint: 'N', run: () => addSegment() },
+      { id: 'add-person', group: 'Edit', label: 'Add someone to the trip', run: () => setPersonSheet('new') },
+      { id: 'library', group: 'Go to', label: 'All my trips', run: onExit },
       { id: 'undo', group: 'Edit', label: 'Undo', hint: '⌘Z', run: () => dispatch({ type: 'history/undo' }) },
       { id: 'redo', group: 'Edit', label: 'Redo', hint: '⌘⇧Z', run: () => dispatch({ type: 'history/redo' }) },
       { id: 'share', group: 'Export', label: 'Share this plan', run: () => setShareOpen(true) },
@@ -347,7 +480,7 @@ export default function App() {
       run: () => jumpToSegment(s.id),
     }));
     return list;
-  }, [trip, prefs, setPref, addSegment, push, announce, jumpToSegment, printItinerary, hintsOn, setHintsOn]);
+  }, [trip, prefs, setPref, addSegment, push, announce, jumpToSegment, printItinerary, hintsOn, setHintsOn, onExit]);
 
   /* ---------- hotkeys ---------- */
   useHotkeys([
@@ -396,6 +529,7 @@ export default function App() {
 
       <TopBar
         trip={trip} view={prefs.view} clock={clock} issues={issues}
+        onExit={onExit}
         canUndo={state.past.length > 0} canRedo={state.future.length > 0}
         theme={prefs.theme === 'light' ? 'light' : 'dark'} railOpen={railOpen}
         onView={(v) => setPref('view', v)}
@@ -458,6 +592,12 @@ export default function App() {
           }} />}
 
           <div className="view-body" id="view-panel" role="tabpanel" aria-labelledby={`tab-${prefs.view}`} tabIndex={-1}>
+            {prefs.view === 'canvas' && (
+              <CanvasView
+                trip={trip} segments={filtered} clock={clock} issues={issues}
+                selectedId={selectedId} now={now} handlers={canvasHandlers}
+              />
+            )}
             {prefs.view === 'timeline' && (
               <TimelineView
                 {...viewProps}
@@ -502,10 +642,13 @@ export default function App() {
             )}
             {prefs.view === 'people' && (
               <PeopleView
-                trip={trip} clock={clock} focusPersonId={focusPersonId}
+                trip={trip} clock={clock} focusPersonId={focusPersonId} issues={issues}
                 onFocusPerson={setFocusPersonId}
                 onExport={(id) => { downloadIcs(trip, { personId: id }); push('Calendar file downloaded.', { tone: 'ok' }); }}
-                onOpenPerson={(id) => { setFocusPersonId(id); setPref('view', 'timeline'); }}
+                onOpenPerson={(id) => { setFocusPersonId(id); setPref('view', 'canvas'); }}
+                onAddPerson={() => setPersonSheet('new')}
+                onEditPerson={(id) => setPersonSheet(id)}
+                onSharePerson={(id) => { setFocusPersonId(id); setShareOpen(true); }}
               />
             )}
             {prefs.view === 'board' && (
@@ -567,6 +710,15 @@ export default function App() {
         onCopyText={(pid) => agendaText(trip, pid ? filtered.filter((s) => attendeesOf(s, trip).includes(pid)) : filtered, zone, pid ?? undefined)}
         onPrint={printItinerary}
       />
+      {personSheet && (
+        <PersonSheet
+          trip={trip}
+          person={personSheet === 'new' ? undefined : trip.people.find((p) => p.id === personSheet)}
+          onSave={savePerson}
+          onDelete={removePerson}
+          onClose={() => setPersonSheet(null)}
+        />
+      )}
       <KeyboardHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
       <Tour
         open={tourOpen} trip={trip}

@@ -328,6 +328,7 @@ export function conferenceTrip(): Trip {
     people: PEOPLE,
     groups: GROUPS,
     segments: SEGMENTS,
+    branches: [],
     ideas: IDEAS,
     updatedAt: Date.now(),
     schemaVersion: 1,
@@ -347,7 +348,7 @@ export function emptyTrip(name = 'New trip'): Trip {
     endDate: iso(later),
     baseTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
     currency: 'USD',
-    places: [], people: [], groups: [], segments: [], ideas: [],
+    places: [], people: [], groups: [], segments: [], branches: [], ideas: [],
     updatedAt: Date.now(),
     schemaVersion: 1,
   };

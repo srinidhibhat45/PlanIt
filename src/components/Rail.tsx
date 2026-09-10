@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { Filters, ID, Issue, SegmentKind, Trip } from '../core/types';
 import { KIND_LABEL } from '../core/layout';
 import { issueSummary } from '../core/schedule';
+import { branchStats } from '../core/branch';
 import { zoneAbbr, zoneCity } from '../core/time';
 import { initials } from './SegmentChrome';
 import { IconChevron, IconSearch } from './Icons';
@@ -101,6 +102,43 @@ export function Rail({
           })}
         </ul>
       </Section>
+
+      {trip.branches.length > 0 && (
+        <Section title="Sub-trips" count={trip.branches.length} defaultOpen>
+          <ul style={{ display: 'grid', gap: 1 }}>
+            {/* The main line is a filter option in its own right: "show me only
+                what the whole group is doing" is the other half of "show me
+                only the beach group". */}
+            {[{ id: 'main', name: 'Main timeline', color: 'var(--ink-3)', memberIds: trip.people.map((p) => p.id) },
+              ...trip.branches].map((b) => {
+              const on = filters.branchIds.includes(b.id);
+              const stats = b.id === 'main'
+                ? { members: trip.people.length, segments: trip.segments.filter((s) => !s.branchId).length }
+                : branchStats(trip, trip.branches.find((x) => x.id === b.id)!);
+              return (
+                <li key={b.id}>
+                  <button
+                    type="button" className="person-row" style={{ ['--c' as string]: b.color }} aria-pressed={on}
+                    onClick={() => onFilters({
+                      branchIds: on
+                        ? filters.branchIds.filter((x) => x !== b.id)
+                        : [...filters.branchIds, b.id],
+                    })}
+                  >
+                    <span className="person-row__dot" aria-hidden="true" />
+                    <span className="grow" style={{ minWidth: 0 }}>
+                      <span className="person-row__name truncate">{b.name}</span>
+                      <span className="person-row__meta">
+                        {stats.members} {stats.members === 1 ? 'person' : 'people'} · {stats.segments} blocks
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </Section>
+      )}
 
       <Section title="Type" count={filters.kinds.length || undefined}>
         <div className="row" style={{ flexWrap: 'wrap', gap: 4 }}>

@@ -87,6 +87,11 @@ export interface Segment {
   locked?: boolean;
   /** Overrides the kind's palette colour. */
   color?: string;
+  /** Sub-trip this belongs to. Undefined = the main timeline everyone shares. */
+  branchId?: ID;
+  /** The person whose personal itinerary this came from. Undefined = trip-level,
+   *  authored by whoever is planning. Used to decide who may edit it. */
+  ownerId?: ID;
 }
 
 export interface Person {
@@ -102,6 +107,17 @@ export interface Person {
   mobilityNotes?: string;
   phone?: string;
   notes?: string;
+  /** When this person is available to the trip, independent of any booked
+   *  flight. Set from the People step; the analyser treats anything outside it
+   *  as impossible. */
+  windowStart?: Epoch;
+  windowEnd?: Epoch;
+  /** Where they are travelling from, so the first leg can be modelled before
+   *  any flight is entered. */
+  homeLat?: number;
+  homeLon?: number;
+  /** A personal edit link hands this person their own itinerary. */
+  handle?: string;
 }
 
 export type GroupKind = 'track' | 'hotel' | 'affinity' | 'custom';
@@ -115,6 +131,22 @@ export interface Group {
   /** For hotel groups, the place they are staying at. */
   placeId?: ID;
   description?: string;
+}
+
+/** A sub-trip: a slice of the plan a subset of people do on their own, which
+ *  splits off the shared timeline and rejoins it later. Branches nest — a
+ *  branch may have a parent branch — so a side trip can itself fork. */
+export interface Branch {
+  id: ID;
+  name: string;
+  color: string;
+  /** Who peels off. Segments in the branch default to these attendees. */
+  memberIds: ID[];
+  /** Nesting. Undefined = forks directly off the main timeline. */
+  parentId?: ID;
+  notes?: string;
+  /** Collapsed branches render as a single spanning bar rather than nodes. */
+  collapsed?: boolean;
 }
 
 /** An unscheduled idea sitting in the backlog, waiting to be dragged onto a day. */
@@ -143,14 +175,16 @@ export interface Trip {
   people: Person[];
   groups: Group[];
   segments: Segment[];
+  branches: Branch[];
   ideas: Idea[];
+  createdAt?: Epoch;
   updatedAt: Epoch;
   schemaVersion: 1;
 }
 
 /* ---------- View state ---------- */
 
-export type ViewId = 'timeline' | 'day' | 'week' | 'agenda' | 'map' | 'people' | 'board';
+export type ViewId = 'canvas' | 'timeline' | 'day' | 'week' | 'agenda' | 'map' | 'people' | 'board';
 
 export type LaneMode = 'person' | 'group' | 'place' | 'kind' | 'unified';
 
@@ -168,6 +202,8 @@ export interface Filters {
   tags: string[];
   query: string;
   hideCancelled: boolean;
+  /** Empty = every branch plus the main line. */
+  branchIds: ID[];
 }
 
 export type Density = 'comfortable' | 'compact';
@@ -184,5 +220,7 @@ export interface Issue {
   code:
     | 'overlap' | 'travel-gap' | 'no-transfer' | 'orphan-evening'
     | 'before-arrival' | 'after-departure' | 'no-attendees'
-    | 'unreachable' | 'tight-connection' | 'no-meal' | 'late-night';
+    | 'unreachable' | 'tight-connection' | 'no-meal' | 'late-night'
+    | 'outside-window' | 'branch-clash' | 'branch-rejoin' | 'branch-orphan'
+    | 'needs-flight';
 }
