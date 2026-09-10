@@ -54,7 +54,7 @@ export function ShareDialog({
       <div ref={trapRef as React.RefObject<HTMLDivElement>}>
         <header className="modal__head">
           <h2 id="share-title" style={{ fontSize: 'var(--step-1)' }}>Share this plan</h2>
-          <button className="btn btn--icon btn--ghost" onClick={onClose} aria-label="Close"><IconClose /></button>
+          <button className="btn btn--icon btn--ghost" onClick={onClose} title="Close · Esc" aria-label="Close"><IconClose /></button>
         </header>
 
         <div className="modal__body">

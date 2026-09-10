@@ -20,7 +20,11 @@ import {
   CARD_H, CARD_W, cardRect, cardsIn, connector, contentBounds, fitTo, frameAt, isScheduled,
   layoutFromSchedule, normalise, peopleFlows, sidesFor, toScreen, toWorld, zoomAt,
 } from '../src/core/board';
-import { DEFAULT_RESOLVE, resolveBoard, topoOrder } from '../src/core/resolve';
+import { DEFAULT_RESOLVE, boardColumns, resolveBoard, topoOrder } from '../src/core/resolve';
+import {
+  compactDuration, describeGap, gapTone, setDuration, setTimeOfDay, shiftBy, stackGaps,
+  summariseDay,
+} from '../src/core/timelayer';
 import { makeBranch, migrate, reidentify } from '../src/core/library';
 import { dateKeyToEpoch } from '../src/core/time';
 import type { Trip } from '../src/core/types';
@@ -737,6 +741,159 @@ ok('isScheduled agrees with what resolve would touch',
 
 ok('every journey gets some slack by default', DEFAULT_RESOLVE.bufferMin > 0);
 
+
+/* ============ the time layer ============ */
+
+/* The board never says what o'clock it is, so the time layer has to read the
+   clock off the cards and hand it back — see `timelayer.ts`. */
+
+eq('a compact duration keeps both halves', compactDuration(3 * HOUR + 55 * MIN), '3h55');
+eq('and pads the minutes so it stays scannable', compactDuration(HOUR + 5 * MIN), '1h05');
+eq('a whole number of hours drops the minutes', compactDuration(2 * HOUR), '2h');
+eq('under an hour is minutes alone', compactDuration(40 * MIN), '40m');
+
+/* The columns the stacking grammar makes are shared between the resolver and
+   the time layer, which is the whole point of `boardColumns`. */
+const columnBoard = boardFixture();
+const stacks = boardColumns(columnBoard, columnBoard.segments);
+eq('a day frame yields one column for a stack of two', stacks.length, 1);
+eq('read top of the board first', stacks[0].members, ['top', 'middle']);
+eq('and the column knows which day it is on', stacks[0].dayKey, '2026-09-25');
+eq('cards outside every day frame are in no column',
+   boardColumns({ ...columnBoard, frames: [] }, columnBoard.segments).length, 0);
+const sideBySide = boardFixture({
+  segments: boardFixture().segments.map((s) => (s.id === 'middle' ? { ...s, at: { x: 320, y: 40 } } : s)),
+});
+eq('two cards side by side are two columns, not one',
+   boardColumns(sideBySide, sideBySide.segments).length, 2);
+
+/* The gap in the gutter is the thing a date cannot tell you. */
+const gapBoard = boardFixture({
+  frames: [{ id: 'f1', title: 'Day 1', rect: { x: 0, y: 0, w: 600, h: 900 }, color: '#fff', dayKey: '2026-09-23' }],
+  segments: boardFixture().segments.map((s) =>
+    s.id === 'top'
+      ? { ...s, start: parseLocal('2026-09-23', '09:00', IST), end: parseLocal('2026-09-23', '10:00', IST) }
+      : s.id === 'middle'
+        ? { ...s, start: parseLocal('2026-09-23', '11:30', IST), end: parseLocal('2026-09-23', '12:30', IST) }
+        : s),
+});
+const seams = stackGaps(gapBoard, IST);
+eq('one seam for one stack of two', seams.length, 1);
+eq('and it measures the real gap between them', seams[0].ms, 90 * MIN);
+eq('which reads as a duration', describeGap(seams[0]), '1h30');
+eq('the seam sits between the two cards',
+   seams[0].at.y, gapBoard.segments[0].at!.y + CARD_H + (300 - 40 - CARD_H) / 2);
+eq('and it knows how much room it has', seams[0].gutter, 300 - 40 - CARD_H);
+
+const tightSeam = stackGaps(boardFixture({
+  frames: gapBoard.frames,
+  segments: gapBoard.segments.map((s) =>
+    s.id === 'middle'
+      ? { ...s, start: parseLocal('2026-09-23', '10:00', IST), end: parseLocal('2026-09-23', '11:00', IST) }
+      : s),
+}), IST)[0];
+eq('back-to-back says so in words', describeGap(tightSeam), 'no gap');
+eq('and is flagged as having no slack', gapTone(tightSeam), 'tight');
+
+const clashSeam = stackGaps(boardFixture({
+  frames: gapBoard.frames,
+  segments: gapBoard.segments.map((s) =>
+    s.id === 'middle'
+      ? { ...s, start: parseLocal('2026-09-23', '09:30', IST), end: parseLocal('2026-09-23', '10:30', IST) }
+      : s),
+}), IST)[0];
+eq('an overlap is named as one', describeGap(clashSeam), 'overlaps 30m');
+eq('and flagged loudly', gapTone(clashSeam), 'clash');
+
+const backwardsSeam = stackGaps(boardFixture({
+  frames: gapBoard.frames,
+  segments: gapBoard.segments.map((s) =>
+    s.id === 'middle'
+      ? { ...s, start: parseLocal('2026-09-23', '07:00', IST), end: parseLocal('2026-09-23', '08:00', IST) }
+      : s),
+}), IST)[0];
+ok('a stack whose clock runs backwards is spotted', backwardsSeam.reversed);
+eq('and named for what it is', describeGap(backwardsSeam), 'out of order');
+eq('rather than reported as a five-hour overlap', gapTone(backwardsSeam), 'clash');
+
+const wiredSeam = stackGaps({
+  ...gapBoard,
+  links: [{ id: 'l1', fromId: 'top', toId: 'middle', kind: 'then' as const }],
+}, IST)[0];
+ok('a seam a connector already labels knows to stay quiet', wiredSeam.linked);
+
+const hiddenGap = stackGaps(gapBoard, IST, new Set(['top']));
+eq('a column closes over a card the filters hid', hiddenGap.length, 0);
+
+/* The ribbon under a day frame. */
+const dayCards = gapBoard.segments.filter((s) => s.id !== 'outside');
+const summary = summariseDay(gapBoard, dayCards, '2026-09-23', IST);
+eq('the ribbon counts the cards in the frame', summary.count, 2);
+eq('it knows when the day starts', fmtTime(summary.first!, { zone: IST }), '09:00');
+eq('and when it ends', fmtTime(summary.last!, { zone: IST }), '12:30');
+eq('busy time is the sum of the cards', summary.busyMs, 2 * HOUR);
+eq('the hole between them is the free stretch', summary.gapFrom, dayCards[0].end);
+eq('nothing is double-booked', summary.clashes, 0);
+eq('and nothing is on the wrong date', summary.offDay, 0);
+
+/* A block sits where its own clock puts it in the 24 hours — 09:00 is 37.5%
+   of the way through the day — and never where the card sits on the board. */
+ok('a block is placed by the clock, not by the layout',
+   Math.abs(summary.blocks[0].from - 9 / 24) < 1e-9,
+   String(summary.blocks[0].from));
+ok('and it is at least wide enough to see',
+   summary.blocks.every((b) => b.to > b.from));
+
+/* Two things at once is only a clash if it is the same person twice over.
+   Parallel tracks are the normal shape of a conference day. */
+const sharedPerson = gapBoard.people[0].id;
+const clashDay = summariseDay(
+  gapBoard,
+  [
+    { ...dayCards[0], attendeeIds: [sharedPerson], everyone: false },
+    { ...dayCards[1], start: dayCards[0].start, end: dayCards[0].end, attendeeIds: [sharedPerson], everyone: false },
+  ],
+  '2026-09-23', IST,
+);
+eq('somebody in two places at once is a clash', clashDay.clashes, 2);
+eq('and the overlap is only counted once as busy time', clashDay.busyMs, HOUR);
+
+const parallelDay = summariseDay(
+  gapBoard,
+  [
+    { ...dayCards[0], attendeeIds: [gapBoard.people[0].id], everyone: false },
+    { ...dayCards[1], start: dayCards[0].start, end: dayCards[0].end, attendeeIds: [gapBoard.people[1].id], everyone: false },
+  ],
+  '2026-09-23', IST,
+);
+eq('two people doing two things at once is not a clash', parallelDay.clashes, 0);
+
+/* A card sitting in one day's frame while timed for another is exactly what
+   resolving is for, so the ribbon says how many there are. */
+const strayDay = summariseDay(gapBoard, dayCards, '2026-09-25', IST);
+eq('cards timed for another date are counted', strayDay.offDay, 2);
+
+eq('an empty frame summarises to nothing', summariseDay(gapBoard, [], '2026-09-23', IST).count, 0);
+
+/* Typing a time in is an edit to the card: same date, same length, new hour. */
+const retimed = setTimeOfDay(dayCards[0], '14:45', IST);
+eq('a typed time lands on the same date', dateKey(retimed.start, IST), '2026-09-23');
+eq('at the hour that was typed', fmtTime(retimed.start, { zone: IST }), '14:45');
+eq('and the card keeps its length', retimed.end - retimed.start, dayCards[0].end - dayCards[0].start);
+
+/* A time typed while looking at somebody else's clock means that clock. */
+const inLondon = setTimeOfDay(dayCards[0], '09:00', LON);
+eq('a time typed in another zone is read in that zone',
+   fmtTime(inLondon.start, { zone: LON }), '09:00');
+
+const stretched = setDuration(dayCards[0], 25);
+eq('a new length moves only the end', stretched.start, dayCards[0].start);
+eq('and it is the length that was asked for', stretched.end - stretched.start, 25 * MIN);
+ok('a length can never be zero', setDuration(dayCards[0], 0).end > setDuration(dayCards[0], 0).start);
+
+const nudged = shiftBy(dayCards[0], -15);
+eq('a nudge moves the whole card', nudged.start, dayCards[0].start - 15 * MIN);
+eq('keeping its length', nudged.end - nudged.start, dayCards[0].end - dayCards[0].start);
 
 /* ============ the library ============ */
 

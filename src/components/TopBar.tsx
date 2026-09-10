@@ -44,6 +44,7 @@ export function TopBar({
       <div className="brand">
         <button
           className="btn btn--icon btn--ghost" onClick={onToggleRail}
+          title={`${railOpen ? 'Hide' : 'Show'} the people and filters panel · \\`}
           aria-label={railOpen ? 'Hide filters panel' : 'Show filters panel'}
           aria-expanded={railOpen}
         >
@@ -101,15 +102,26 @@ export function TopBar({
         >
           <IconSearch />
         </button>
-        <button className="btn btn--icon btn--ghost desktop-only" onClick={onUndo} disabled={!canUndo} aria-label="Undo">
+        <button
+          className="btn btn--icon btn--ghost desktop-only" onClick={onUndo} disabled={!canUndo}
+          title="Undo · ⌘Z" aria-label="Undo"
+        >
           <IconUndo />
         </button>
-        <button className="btn btn--icon btn--ghost desktop-only" onClick={onRedo} disabled={!canRedo} aria-label="Redo">
+        <button
+          className="btn btn--icon btn--ghost desktop-only" onClick={onRedo} disabled={!canRedo}
+          title="Redo · ⌘⇧Z" aria-label="Redo"
+        >
           <IconRedo />
         </button>
 
         <button
           className="btn btn--icon btn--ghost issue-badge" onClick={onOpenIssues}
+          title={
+            s.total === 0
+              ? 'Nothing wrong with the plan'
+              : `${s.error} blocking, ${s.warning} risky, ${s.info} to consider — open the list`
+          }
           aria-label={`${s.total} issues found: ${s.error} blocking, ${s.warning} risky, ${s.info} suggestions`}
         >
           <IconWarn />
@@ -121,6 +133,7 @@ export function TopBar({
         </button>
 
         <button className="btn btn--icon btn--ghost" onClick={onTheme}
+          title={`Switch to the ${theme === 'dark' ? 'light' : 'dark'} theme`}
           aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}>
           {theme === 'dark' ? <IconSun /> : <IconMoon />}
         </button>

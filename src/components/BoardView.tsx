@@ -81,7 +81,9 @@ export function BoardView({
             onChange={(e) => setDraft(e.target.value)}
             aria-label="New idea"
           />
-          <button className="btn btn--icon" type="submit" aria-label="Add idea"><IconPlus /></button>
+          <button className="btn btn--icon" type="submit" title="Add this idea to the backlog" aria-label="Add idea">
+            <IconPlus />
+          </button>
         </form>
 
         <ul className="board__list">

@@ -359,6 +359,31 @@
   display: flex; gap: 5px; white-space: nowrap; overflow: hidden;
 }
 .bdc__dur { color: var(--ink-3); font-weight: 500; }
+.bdc__date { color: var(--ink-3); font-weight: 500; }
+.bdc__date[data-off] { color: var(--warn-ink); font-weight: 700; }
+
+/* The clock on a card is a control, not a caption: click it and set a time
+   without opening the details panel. */
+/* No `font: inherit` here — base.css already gives buttons the inherited
+   font, and repeating it at this specificity would beat `.bdc__time`'s own
+   font-size and blow the row up to 16px. */
+.bdc__time--live {
+  padding: 1px 4px; margin: -1px -4px;
+  border: 0; border-radius: var(--r-1);
+  cursor: pointer; text-align: left;
+  transition: background-color var(--dur-1) var(--ease-out);
+}
+.bdc__time--live:hover { background: var(--bg-4); color: var(--ink-1); }
+.bdc__time--live:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.bdc__time--live[data-off] { color: var(--warn-ink); }
+
+/* Sitting in one day's frame while still timed for another. Resolving fixes
+   it; until then the card says so rather than looking settled. */
+.bdc[data-offday]:not([data-selected]) {
+  border-color: color-mix(in oklab, var(--warn) 50%, var(--line-2));
+}
+/* The time editor must not be covered by the card next door. */
+.bdc:focus-within { z-index: 6; }
 .bdc__warn { display: grid; place-items: center; margin-left: auto; }
 .bdc__warn--error { color: var(--danger-ink); }
 .bdc__warn--warning { color: var(--warn-ink); }
@@ -448,6 +473,11 @@
   padding: 0 4px; border-radius: 3px; background: var(--bg-4);
 }
 .bdf__tag--branch { color: var(--ink-1); background: color-mix(in oklab, var(--c) 30%, transparent); }
+.bdf__tag--day {
+  color: var(--ink-2); background: var(--bg-3);
+  text-transform: none; letter-spacing: 0;
+  font-size: 0.6rem; font-variant-numeric: tabular-nums;
+}
 .bdf__n { font-family: var(--font-mono); font-size: 0.6rem; color: var(--ink-3); }
 .bdf__x {
   display: grid; place-items: center; border: 0; background: none;
@@ -461,6 +491,120 @@
   background: var(--bg-2); cursor: nwse-resize;
 }
 .bdf__resize:hover, .bdf__resize:focus-visible { border-color: var(--brand); }
+
+/* ---------- the time layer ---------- */
+
+/* The shape of one day, hanging under its frame. A readout of the cards'
+   times, not a grid they sit on — see `timelayer.ts`. */
+.bdr {
+  position: absolute;
+  left: 0; top: calc(100% + 8px);
+  width: 100%;
+  padding: 0 2px 11px;
+  display: grid; gap: 4px;
+}
+.bdr__row {
+  display: flex; align-items: center; gap: 8px;
+  flex-wrap: wrap;
+  font-size: 0.6rem; line-height: 1.1;
+  color: var(--ink-3);
+}
+.bdr__span { color: var(--ink-1); font-weight: 650; }
+.bdr__plus {
+  margin-left: 2px; padding: 0 3px; border-radius: 3px;
+  font-size: 0.5rem; color: var(--ink-3); background: var(--bg-3);
+  vertical-align: 1px;
+}
+.bdr__busy { color: var(--ink-2); }
+.bdr__free { color: var(--ok-ink); }
+.bdr__flag {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 1px 5px; border-radius: var(--r-full); font-weight: 650;
+}
+.bdr__flag--clash { color: var(--danger-ink); background: var(--danger-soft); }
+.bdr__flag--off { color: var(--warn-ink); background: var(--warn-soft); }
+
+.bdr__track {
+  position: relative; height: 13px;
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--bg-3) 72%, transparent);
+  border: 1px solid var(--line-1);
+}
+.bdr__tick { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line-2); }
+.bdr__ticklabel {
+  position: absolute; top: calc(100% + 2px); left: 0;
+  transform: translateX(-50%);
+  font-size: 0.5rem; color: var(--ink-3); font-variant-numeric: tabular-nums;
+}
+
+.bdr__block {
+  position: absolute; top: 1px; bottom: 1px;
+  min-width: 3px; padding: 0;
+  /* A hairline on the leading edge, so a run of back-to-back blocks reads as
+     several things rather than as one long smear. */
+  border: 0; border-left: 1px solid color-mix(in oklab, var(--bg-0) 60%, transparent);
+  border-radius: 2px;
+  background: color-mix(in oklab, var(--c) 74%, transparent);
+  cursor: pointer;
+  transition: filter var(--dur-1) var(--ease-out);
+}
+.bdr__block:hover { filter: brightness(1.35); }
+.bdr__block:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.bdr__block[data-clash] { box-shadow: inset 0 0 0 1.5px var(--danger); }
+.bdr__block[data-off] {
+  background: repeating-linear-gradient(
+    115deg, var(--warn) 0 3px, transparent 3px 6px
+  );
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--warn) 70%, transparent);
+}
+.bdr__block[data-wraps] { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+
+/* How long the board is leaving between two cards stacked in one column. */
+.bdg {
+  position: absolute; transform: translate(-50%, -50%);
+  pointer-events: none;
+  padding: 1px 6px; border-radius: var(--r-full);
+  font-size: 0.56rem; font-weight: 650; white-space: nowrap;
+  font-family: var(--font-mono);
+  border: 1px solid var(--line-1);
+  background: var(--bg-1); color: var(--ink-3);
+}
+.bdg[data-tone='tight'] { color: var(--warn-ink); background: var(--warn-soft); border-color: transparent; }
+.bdg[data-tone='clash'] { color: var(--danger-ink); background: var(--danger-soft); border-color: transparent; }
+.bdg[data-tone='long'] { border-style: dashed; border-color: var(--line-2); }
+.bdg[data-tone='crossday'] { color: var(--accent-ink); background: var(--accent-soft); border-color: transparent; }
+
+/* Setting a time without leaving the board. */
+.bdt {
+  position: absolute; left: 0; top: calc(100% + 8px);
+  width: 13.5rem; z-index: 8;
+  display: grid; gap: 6px;
+  padding: 8px;
+  border-radius: var(--r-2);
+  background: var(--bg-2); border: 1px solid var(--line-2);
+  box-shadow: var(--shadow-3);
+  cursor: default;
+}
+.bdt__row { display: flex; align-items: center; gap: 6px; }
+.bdt__row--acts { gap: 4px; }
+.bdt__label { width: 3.2rem; font-size: 0.62rem; color: var(--ink-3); }
+.bdt__in {
+  flex: 1; min-width: 0;
+  padding: 3px 5px;
+  font: inherit; font-size: 0.74rem;
+  color: var(--ink-1); background: var(--bg-3);
+  border: 1px solid var(--line-2); border-radius: var(--r-1);
+}
+.bdt__in:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
+.bdt__nudge {
+  padding: 2px 7px; font-size: 0.62rem; font-weight: 650;
+  color: var(--ink-2); background: var(--bg-3);
+  border: 1px solid var(--line-2); border-radius: var(--r-1);
+  cursor: pointer;
+}
+.bdt__nudge:hover { color: var(--ink-1); background: var(--bg-4); }
+.bdt__end { font-size: 0.6rem; color: var(--ink-3); }
+.bdt__note { font-size: 0.58rem; line-height: 1.35; color: var(--warn-ink); }
 
 /* ---------- stickies ---------- */
 

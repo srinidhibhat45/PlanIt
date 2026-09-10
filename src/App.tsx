@@ -311,6 +311,8 @@ export default function App({
 
     onPin: (ids, pinned) => guard(() => dispatch({ type: 'segment/pin', ids, pinned })),
 
+    onSetTime: (id, start, end) => guard(() => dispatch({ type: 'segment/set-time', id, start, end })),
+
     onAssign: (segmentId, personId, on) =>
       guard(() => dispatch({ type: 'segment/assign', id: segmentId, personId, on })),
 
@@ -485,6 +487,14 @@ export default function App({
       { id: 'clock-base', group: 'Clock', label: 'Times in trip time', run: () => setClock({ type: 'base' }) },
       { id: 'clock-device', group: 'Clock', label: 'Times on my device clock', run: () => setClock({ type: 'device' }) },
       { id: 'add', group: 'Edit', label: 'Add a block', hint: 'N', run: () => addSegment() },
+      {
+        id: 'board-tidy', group: 'Board', label: 'Tidy the board — a frame per day, in time order',
+        run: () => { setPref('view', 'canvas'); boardHandlers.onTidy(); },
+      },
+      {
+        id: 'board-resolve', group: 'Board', label: 'Resolve the board onto the timeline', hint: '⌘⏎',
+        run: () => { setPref('view', 'canvas'); boardHandlers.onResolve(); },
+      },
       { id: 'add-person', group: 'Edit', label: 'Add someone to the trip', run: () => setPersonSheet('new') },
       { id: 'library', group: 'Go to', label: 'All my trips', run: onExit },
       { id: 'undo', group: 'Edit', label: 'Undo', hint: '⌘Z', run: () => dispatch({ type: 'history/undo' }) },
@@ -507,7 +517,7 @@ export default function App({
       run: () => jumpToSegment(s.id),
     }));
     return list;
-  }, [trip, prefs, setPref, addSegment, push, announce, jumpToSegment, printItinerary, hintsOn, setHintsOn, onExit]);
+  }, [trip, prefs, setPref, addSegment, boardHandlers, push, announce, jumpToSegment, printItinerary, hintsOn, setHintsOn, onExit]);
 
   /* ---------- hotkeys ---------- */
   useHotkeys([
@@ -516,7 +526,13 @@ export default function App({
     { combo: 'mod+shift+z', description: 'Redo', run: () => dispatch({ type: 'history/redo' }) },
     { combo: 'shift+?', description: 'Help', run: () => setHelpOpen(true) },
     { combo: '?', description: 'Help', run: () => setHelpOpen(true) },
-    { combo: 'n', description: 'New block', run: () => addSegment() },
+    // The board claims the bare letters for its tools — N is the note tool
+    // there, and C drops a card — so the global "new block" stands aside.
+    {
+      combo: 'n', description: 'New block',
+      when: () => prefs.view !== 'canvas',
+      run: () => addSegment(),
+    },
     { combo: '/', description: 'Search', run: () => document.getElementById('rail-q')?.focus() },
     { combo: '\\', description: 'Toggle rail', run: () => setRailOpen((r) => !r) },
     { combo: '[', description: 'Previous day', run: () => stepDay(-1) },

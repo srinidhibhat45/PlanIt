@@ -10,7 +10,7 @@ import { IconClose } from './Icons';
 const HINTS: Record<ViewId, { lead: string; rest: string }> = {
   canvas: {
     lead: 'The board.',
-    rest: 'Arrange cards however you like. A card in a day frame happens that day, and inside a frame top to bottom is the order of the day — side by side means at the same time. Drag a card’s dot onto another to say what follows what. Resolve turns the arrangement into a schedule.',
+    rest: 'Arrange cards however you like. A card in a day frame happens that day, and inside a frame top to bottom is the order of the day — side by side means at the same time. Drag a card’s dot onto another to say what follows what. Resolve turns the arrangement into a schedule. Times shows the clock without gridding the board: the shape of each day under its frame, the gap in every gutter, and a time on each card you can click and type into.',
   },
   timeline: {
     lead: 'Everyone at once.',

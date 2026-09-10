@@ -22,6 +22,8 @@ export const IconWeek = (p: P) => <Svg {...p}><rect x="3" y="4" width="18" heigh
 export const IconAgenda = (p: P) => <Svg {...p}><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" /></Svg>;
 export const IconMap = (p: P) => <Svg {...p}><path d="m9 4-6 2v14l6-2 6 2 6-2V4l-6 2-6-2Z" /><path d="M9 4v14M15 6v14" /></Svg>;
 export const IconPeople = (p: P) => <Svg {...p}><path d="M16 20v-1a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v1" /><circle cx="9" cy="7" r="3.2" /><path d="M22 20v-1a4 4 0 0 0-3-3.87M16 3.13A4 4 0 0 1 16 11" /></Svg>;
+export const IconNote = (p: P) => <Svg {...p}><path d="M4 4h16v11l-5 5H4z" /><path d="M20 15h-3a2 2 0 0 0-2 2v3" /><path d="M8 9h8M8 13h4" /></Svg>;
+export const IconFrame = (p: P) => <Svg {...p}><path d="M7 3v18M17 3v18M3 7h18M3 17h18" /></Svg>;
 export const IconBoard = (p: P) => <Svg {...p}><rect x="3" y="3" width="6.5" height="18" rx="1.5" /><rect x="14.5" y="3" width="6.5" height="11" rx="1.5" /></Svg>;
 export const IconWarn = (p: P) => <Svg {...p}><path d="M10.3 3.6 1.9 18a2 2 0 0 0 1.7 3h16.8a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0Z" /><path d="M12 9v4M12 17h.01" /></Svg>;
 export const IconShare = (p: P) => <Svg {...p}><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4" /></Svg>;
@@ -35,6 +37,7 @@ export const IconUndo = (p: P) => <Svg {...p}><path d="M3 7v6h6" /><path d="M3.5
 export const IconRedo = (p: P) => <Svg {...p}><path d="M21 7v6h-6" /><path d="M20.5 13a9 9 0 1 1-2.3-6.4L21 9" /></Svg>;
 export const IconSun = (p: P) => <Svg {...p}><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></Svg>;
 export const IconMoon = (p: P) => <Svg {...p}><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" /></Svg>;
+export const IconClock = (p: P) => <Svg {...p}><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.5 2" /></Svg>;
 export const IconCalendar = (p: P) => <Svg {...p}><rect x="3" y="4" width="18" height="17" rx="2" /><path d="M3 9h18M8 2v4M16 2v4" /><path d="m9 15 2 2 4-4" /></Svg>;
 export const IconDownload = (p: P) => <Svg {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></Svg>;
 export const IconUpload = (p: P) => <Svg {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" /></Svg>;

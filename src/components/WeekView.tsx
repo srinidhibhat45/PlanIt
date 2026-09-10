@@ -104,6 +104,7 @@ export function WeekView({
                       className="wk__pill"
                       data-kind={seg.kind}
                       aria-selected={selectedId === seg.id}
+                      title={describeSegment(seg, trip, clock)}
                       aria-label={describeSegment(seg, trip, clock)}
                       style={dragging?.id === seg.id ? { opacity: 0.4 } : undefined}
                       onPointerDown={(e) => {

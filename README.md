@@ -179,6 +179,33 @@ Two buttons bridge the board and the calendar, in both directions:
   On a freshly tidied trip, Resolve reports no change — which is the property
   worth having, and is asserted in the test suite.
 
+#### The time layer
+
+A board that only knew the date would be hard to plan a day with, so the clock
+is legible on it without any of it becoming a grid. **Times** in the toolbar
+turns on three readouts, all derived from the cards rather than from the layout:
+
+- A **ribbon** under each day frame: when the day starts and ends, how much of
+  it is spoken for, where the longest clear stretch is, and a 24-hour track
+  with a block per card. Click a block to jump to its card. A day that runs
+  past midnight is marked `+1`.
+- A **gap chip** in the gutter between two stacked cards — `1h30`, `no gap`,
+  `overlaps 30m`, or `out of order` when the stack says one order and the clock
+  says the other. It reads the same columns `resolve.ts` reads, so what the
+  seam says is what resolving will do. A pair a connector already labels stays
+  quiet, since the connector's own chip already says it.
+- The **clock on each card**, as a range you can click and type into: start
+  time, length, ±15 minutes. When a card agrees with its frame, the frame
+  carries the date and the card carries only the hours; when it disagrees, the
+  card says the date in warning ink, because that is a card Resolve will move.
+
+A "clash" here means somebody in two places at once, not two things merely
+happening at once — read the same way the issues panel reads it, so two
+parallel tracks are not flagged on every day of the trip.
+
+Position still means exactly what it meant. Turning the layer off changes
+nothing but what you can see.
+
 Also on the board: **sticky notes** for the things that are not plans yet, a
 **roster** pinned to the corner that you drag faces from onto cards, and a
 **people-flows** overlay — who actually goes from what to what, derived from
@@ -263,7 +290,11 @@ Not a retrofit. Some specifics:
   ⌥ for an hour, ↑↓ to hand it to another person), <kbd>Enter</kbd> drops,
   <kbd>Esc</kbd> puts it back. Every step is announced with the resulting time.
   Keyboard nudges apply exactly the delta they announced; pointer drags snap to
-  the grid. Satisfies 2.1.1 and 2.5.7.
+  the grid. On the board it is the arrow keys: one grid step, ⇧ for the fine
+  one, announced with the frame the card landed in. Satisfies 2.1.1 and 2.5.7.
+- **Every icon-only control names itself on hover**, with its shortcut, and
+  carries the same wording as its accessible name. Two tools never share a
+  glyph.
 - **Contrast.** Zero AA failures in either theme, verified by measuring every
   visible text node against its real painted background; the lowest ratio is
   4.99:1 and about two thirds of text already clears AAA. A "higher contrast"
@@ -289,17 +320,32 @@ call `window.__audit()`.
 
 ## Keyboard
 
-| | |
+Every icon-only control names itself on hover, shortcut included, and the full
+list lives behind <kbd>?</kbd>.
+
+| Anywhere | |
 |---|---|
 | <kbd>⌘K</kbd> | Command palette — every action by name |
 | <kbd>?</kbd> | Shortcut help |
 | <kbd>1</kbd>–<kbd>7</kbd> | Jump to a view |
-| <kbd>N</kbd> | New block |
+| <kbd>N</kbd> | New block (except on the board, where N is the note tool) |
 | <kbd>/</kbd> | Search |
 | <kbd>[</kbd> <kbd>]</kbd> | Previous / next day |
 | <kbd>\</kbd> | Toggle the filter rail |
 | <kbd>⌘Z</kbd> / <kbd>⌘⇧Z</kbd> | Undo / redo |
 | <kbd>⌘</kbd> + scroll | Zoom the time axis |
+
+| On the board | |
+|---|---|
+| <kbd>V</kbd> <kbd>H</kbd> <kbd>C</kbd> <kbd>N</kbd> <kbd>F</kbd> <kbd>L</kbd> | Select, pan, card, note, frame, connect |
+| <kbd>Space</kbd> held | Pan with any tool |
+| <kbd>⌘A</kbd> | Select every card |
+| arrows | Move the selection one grid step — <kbd>⇧</kbd> for four pixels |
+| <kbd>⌫</kbd> | Delete what is selected: cards, a note, a frame, a connector |
+| <kbd>P</kbd> | Pin or unpin the selection |
+| <kbd>T</kbd> | Set the time on the selected card |
+| <kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd> | Zoom in, out, fit |
+| <kbd>⌘⏎</kbd> | Resolve the board onto the timeline |
 
 ---
 
@@ -315,6 +361,7 @@ src/
     layout.ts      lane packing and scale maths
     board.ts       the board: viewport maths, containment, connectors, layout
     resolve.ts     board → timeline: the pass that hands out times
+    timelayer.ts   the clock read off the board: day ribbons, gutter gaps
     branch.ts      sub-trips — spans, nesting, split and rejoin points
     geo.ts         place search, map-link parsing, timezone from coordinates
     library.ts     the trip library, migration and duplication
@@ -325,6 +372,7 @@ src/
     clock.ts       which zone the UI renders in
   components/    views and chrome
     CanvasView.tsx the board — tools, cards, frames, stickies, connectors
+    BoardTime.tsx  the time layer on screen — day ribbons, gap chips, time editor
     TripsView.tsx  the library landing page
     PersonSheet.tsx  add or edit a traveller
     PlaceSearch.tsx  search, paste a map link, or type coordinates

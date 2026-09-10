@@ -17,6 +17,23 @@ const GROUPS: { title: string; rows: [string, string][] }[] = [
     ],
   },
   {
+    title: 'The board',
+    rows: [
+      ['V H C N F L', 'Tools: select, pan, card, note, frame, connect'],
+      ['Space (held)', 'Pan with any tool'],
+      ['⌘A / Ctrl A', 'Select every card'],
+      ['← → ↑ ↓', 'Move the selection one grid step'],
+      ['⇧ + arrows', 'Fine — four pixels, for lining two cards up'],
+      ['⌫ / Del', 'Delete what is selected — cards, a note, a frame, a connector'],
+      ['P', 'Pin or unpin the selection'],
+      ['T', 'Set the time on the selected card'],
+      ['+ / −', 'Zoom in and out'],
+      ['0', 'Fit the whole board on screen'],
+      ['⌘⏎ / Ctrl ⏎', 'Resolve the board onto the timeline'],
+      ['Esc', 'Drop the selection, back to the select tool'],
+    ],
+  },
+  {
     title: 'Timeline and day grid',
     rows: [
       ['Tab', 'Enter the grid'],
@@ -55,12 +72,14 @@ export function KeyboardHelp({ open, onClose }: { open: boolean; onClose: () => 
       <div ref={trapRef as React.RefObject<HTMLDivElement>}>
         <header className="modal__head">
           <h2 id="kb-title" style={{ fontSize: 'var(--step-1)' }}>Keyboard</h2>
-          <button className="btn btn--icon btn--ghost" onClick={onClose} aria-label="Close"><IconClose /></button>
+          <button className="btn btn--icon btn--ghost" onClick={onClose} title="Close · Esc" aria-label="Close"><IconClose /></button>
         </header>
         <div className="modal__body">
           <p style={{ fontSize: 'var(--step--1)', color: 'var(--ink-2)' }}>
             Everything you can do with a pointer, you can do from the keyboard — including
-            dragging blocks around, which is announced as you go.
+            dragging blocks around the timeline and moving cards about the board, both of
+            which are announced as you go. Every icon says what it does, and its key, if you
+            rest the pointer on it.
           </p>
           {GROUPS.map((g) => (
             <section key={g.title}>

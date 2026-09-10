@@ -261,7 +261,7 @@ export function Tour({
       <div ref={trapRef as React.RefObject<HTMLDivElement>}>
         <header className="modal__head">
           <span className="eyebrow">{step.eyebrow}</span>
-          <button className="btn btn--icon btn--ghost" onClick={finish} aria-label="Close the tour">
+          <button className="btn btn--icon btn--ghost" onClick={finish} title="Close the tour · Esc" aria-label="Close the tour">
             <IconClose />
           </button>
         </header>

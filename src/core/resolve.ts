@@ -26,7 +26,7 @@
  *      chronological order swap times with each other. Nothing is invented, and
  *      nothing is pulled earlier. */
 
-import type { Epoch, ID, Issue, Link, Place, Segment, Trip } from './types';
+import type { Epoch, ID, IsoDate, Issue, Link, Place, Segment, Trip } from './types';
 import { DAY, MIN, addDays, dateKey, dateKeyToEpoch, fmtDate, fmtTime } from './time';
 
 /** Kept in step with `CARD_W` in `board.ts`. It lives here as a plain number so
@@ -117,6 +117,55 @@ export function topoOrder(
   return { order, cycle };
 }
 
+/* ---------- the board's stacking grammar ---------- */
+
+export interface BoardColumn {
+  frameId: ID;
+  dayKey: IsoDate;
+  /** The cards in the column, top of the board first. */
+  members: ID[];
+}
+
+/** The columns a day frame's arrangement makes.
+ *
+ *  Within a day frame, a card sits *below* another one because it happens
+ *  after it — unless it sits *beside* it, which means the two run in parallel.
+ *  Two cards are in the same column when their horizontal extents overlap; a
+ *  column is then read top to bottom as the order of that part of the day.
+ *
+ *  That is the whole spatial grammar of the board, and it has two readers: the
+ *  resolver, which turns it into edges, and the time layer, which draws the
+ *  gap between each pair. They share this function so they can never disagree
+ *  about what is stacked under what.
+ *
+ *  A card inside two nested day frames appears in a column for each of them;
+ *  the resolver picks the smallest frame when it comes to deciding the date. */
+export function boardColumns(trip: Trip, segments: Segment[]): BoardColumn[] {
+  const out: BoardColumn[] = [];
+  for (const frame of trip.frames ?? []) {
+    if (!frame.dayKey) continue;
+    const inFrame = segments
+      .filter((s) => s.at && contains(frame.rect, s.at))
+      .sort((a, b) => a.at!.y - b.at!.y || a.at!.x - b.at!.x);
+
+    const columns: { min: number; max: number; members: ID[] }[] = [];
+    for (const seg of inFrame) {
+      const min = seg.at!.x;
+      const max = seg.at!.x + CARD_WIDTH;
+      const column = columns.find((c) => min < c.max && c.min < max);
+      if (column) {
+        column.members.push(seg.id);
+        column.min = Math.min(column.min, min);
+        column.max = Math.max(column.max, max);
+      } else {
+        columns.push({ min, max, members: [seg.id] });
+      }
+    }
+    for (const c of columns) out.push({ frameId: frame.id, dayKey: frame.dayKey, members: c.members });
+  }
+  return out;
+}
+
 /* ---------- costs ---------- */
 
 export function linkCost(
@@ -174,37 +223,20 @@ export function resolveBoard(
     rankOf.set(s.id, day + (s.at ? s.at.y : 0) * 1000 + (s.at ? s.at.x : 0));
   });
 
-  /* Within a day frame, a card sits *below* another one because it happens
-     after it — unless it sits beside it, which means the two run in parallel.
-     That is the whole spatial grammar of the board, so it is turned into real
-     edges here rather than left as a special case in the walk. Two cards are
-     in the same column when their horizontal extents overlap. */
+  /* The stacking grammar, turned into real edges rather than left as a special
+     case in the walk. `boardColumns` is shared with the time layer, so what
+     the board *says* about a stack and what this pass *reads* from it cannot
+     drift apart. */
   const implicit: Link[] = [];
   const columnsByFrame: ID[][] = [];
-  for (const frame of trip.frames ?? []) {
-    if (!frame.dayKey) continue;
-    const inFrame = segments
-      .filter((s) => s.at && contains(frame.rect, s.at))
-      .sort((a, b) => a.at!.y - b.at!.y || a.at!.x - b.at!.x);
-
-    const columns: { min: number; max: number; members: ID[] }[] = [];
-    for (const seg of inFrame) {
-      const min = seg.at!.x;
-      const max = seg.at!.x + CARD_WIDTH;
-      const column = columns.find((c) => min < c.max && c.min < max);
-      if (column) {
-        implicit.push({
-          id: `col:${column.members[column.members.length - 1]}:${seg.id}`,
-          fromId: column.members[column.members.length - 1], toId: seg.id, kind: 'then',
-        });
-        column.members.push(seg.id);
-        column.min = Math.min(column.min, min);
-        column.max = Math.max(column.max, max);
-      } else {
-        columns.push({ min, max, members: [seg.id] });
-      }
+  for (const column of boardColumns(trip, segments)) {
+    for (let i = 1; i < column.members.length; i++) {
+      implicit.push({
+        id: `col:${column.members[i - 1]}:${column.members[i]}`,
+        fromId: column.members[i - 1], toId: column.members[i], kind: 'then',
+      });
     }
-    for (const c of columns) if (c.members.length > 1) columnsByFrame.push(c.members);
+    if (column.members.length > 1) columnsByFrame.push(column.members);
   }
 
   const ids = segments.map((s) => s.id);

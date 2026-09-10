@@ -77,7 +77,7 @@ export function Inspector({
           <p className="eyebrow">{iconFor(seg)} {KIND_LABEL[seg.kind]}</p>
           <h2 style={{ fontSize: 'var(--step-1)' }} className="truncate">{seg.title}</h2>
         </div>
-        <button className="btn btn--icon btn--ghost" onClick={onClose} aria-label="Close details"><IconClose /></button>
+        <button className="btn btn--icon btn--ghost" onClick={onClose} title="Close the details panel · Esc" aria-label="Close details"><IconClose /></button>
       </header>
 
       {related.length > 0 && (

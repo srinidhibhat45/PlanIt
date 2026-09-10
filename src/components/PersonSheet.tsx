@@ -113,7 +113,7 @@ export function PersonSheet({
           <h2 id="person-h" className="sheet__title">
             {person ? `Edit ${person.name || 'traveller'}` : 'Add someone to the trip'}
           </h2>
-          <button type="button" className="btn btn--icon btn--ghost" onClick={onClose} aria-label="Close">
+          <button type="button" className="btn btn--icon btn--ghost" onClick={onClose} title="Close · Esc" aria-label="Close">
             <IconClose size={16} />
           </button>
         </div>

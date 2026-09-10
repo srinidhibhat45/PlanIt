@@ -11,28 +11,37 @@
  *      inside the frame is the order of the day
  *    · inside a sub-trip frame → that card belongs to that sub-trip
  *    · anywhere else       → nothing at all, which is the point of a board
+ *
+ *  The clock is still legible, though, without any of that becoming a grid:
+ *  the **time layer** (`timelayer.ts`, toggled in the toolbar) derives it from
+ *  the cards and draws it where it is needed — a ribbon under each day frame
+ *  for the shape of the day, a chip in each gutter for the gap between two
+ *  stacked cards, and a range on every card you can click and type into.
+ *  Turning it off changes nothing but what you can see.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import type {
-  ClockMode, Frame, ID, Issue, Link, Place, Point, Rect, Segment, Sticky, Trip,
+  ClockMode, Epoch, Frame, ID, Issue, Link, Place, Point, Rect, Segment, Sticky, Trip,
 } from '../core/types';
 import {
   CARD_H, CARD_W, STICKY_H, STICKY_W, cardRect, cardsIn, connector, contentBounds,
   fitTo, frameAt, isScheduled, normalise, nextFreeSpot, peopleFlows,
   stickyRect, toWorld, zoomAt, type Viewport,
 } from '../core/board';
-import { contains } from '../core/resolve';
-import { MIN, fmtDate, fmtDuration, fmtTime } from '../core/time';
+import { contains, frameDayFor } from '../core/resolve';
+import { dateKey, dateKeyToEpoch, fmtDate, fmtDuration, fmtTime } from '../core/time';
+import { compactDuration, stackGaps, summariseDay, type DaySummary } from '../core/timelayer';
 import { attendeesOf } from '../core/schedule';
 import { axisZone } from '../core/clock';
 import { branchMembers } from '../core/branch';
 import { KIND_LABEL } from '../core/layout';
+import { DayRibbon, GapChip, TimePop } from './BoardTime';
 import { PlaceSearch } from './PlaceSearch';
 import { initials } from './SegmentChrome';
 import {
-  IconBoard, IconClose, IconGrab, IconLink, IconLock, IconPlus, IconSearch,
-  IconSparkle, IconTarget, IconTrash, IconWarn, IconZoomIn, IconZoomOut,
+  IconBoard, IconClock, IconClose, IconFrame, IconGrab, IconLink, IconLock, IconNote,
+  IconPlus, IconSearch, IconSparkle, IconTarget, IconTrash, IconWarn, IconZoomIn, IconZoomOut,
 } from './Icons';
 
 export type Tool = 'select' | 'hand' | 'card' | 'note' | 'frame' | 'connect';
@@ -43,6 +52,8 @@ export interface BoardHandlers {
   onCreateCard: (at: Point, draft?: Partial<Segment>, place?: Place) => void;
   onDeleteCards: (ids: ID[]) => void;
   onPin: (ids: ID[], pinned: boolean) => void;
+  /** A time typed straight into a card, without a trip to the details panel. */
+  onSetTime: (id: ID, start: Epoch, end: Epoch) => void;
   onAssign: (segmentId: ID, personId: ID, on: boolean) => void;
   onLink: (fromId: ID, toId: ID, kind: Link['kind']) => void;
   onPatchLink: (id: ID, patch: Partial<Link>) => void;
@@ -73,6 +84,23 @@ type Drag =
 
 const STICKY_COLOURS = ['#ffb020', '#14d4c4', '#8b7cff', '#ff6b9d', '#a3e635'];
 
+/** Tools by their shortcut. Shown in every tool's tooltip and in the help
+ *  sheet, so all three come from the same list of letters. */
+const TOOL_KEYS: Record<string, Tool> = {
+  v: 'select', h: 'hand', c: 'card', n: 'note', f: 'frame', l: 'connect',
+};
+
+/** The letter that reaches a tool, for its tooltip and its accessible name —
+ *  read back out of `TOOL_KEYS` so the two can never disagree. */
+function shortcutFor(id: Tool): string {
+  return (Object.keys(TOOL_KEYS).find((k) => TOOL_KEYS[k] === id) ?? '').toUpperCase();
+}
+
+/** One press of an arrow key. `GRID_STEP` is one cell of the dot grid the
+ *  board is drawn on; Shift gives the fine step, for lining two cards up. */
+const GRID_STEP = 24;
+const FINE_STEP = 4;
+
 export function CanvasView({
   trip, segments, clock, issues, selectedId, now, handlers,
 }: {
@@ -97,6 +125,8 @@ export function CanvasView({
   const [spaceDown, setSpaceDown] = useState(false);
   const [hoverPerson, setHoverPerson] = useState<ID | null>(null);
   const [showFlows, setShowFlows] = useState(true);
+  const [showTime, setShowTime] = useState(true);
+  const [timeCard, setTimeCard] = useState<ID | null>(null);
   const [shelfOpen, setShelfOpen] = useState(false);
   const [branchDraft, setBranchDraft] = useState<{ name: string; ids: ID[] } | null>(null);
   const [editingSticky, setEditingSticky] = useState<ID | null>(null);
@@ -127,6 +157,36 @@ export function CanvasView({
   const flows = useMemo(
     () => (showFlows ? peopleFlows(trip, rects) : []),
     [trip, rects, showFlows],
+  );
+
+  /* The time layer. Read off the cards, never off the layout — see
+     `timelayer.ts`. Dates are bucketed in the trip's own zone, the way the
+     resolver does it, while the times are rendered in whichever clock the
+     viewer has chosen. */
+  const boardZone = trip.baseTimezone;
+
+  const daySummaries = useMemo(() => {
+    const out = new Map<ID, DaySummary>();
+    if (!showTime) return out;
+    for (const frame of trip.frames ?? []) {
+      if (!frame.dayKey) continue;
+      out.set(frame.id, summariseDay(
+        trip, cards.filter((s) => contains(frame.rect, s.at!)), frame.dayKey, zone,
+      ));
+    }
+    return out;
+  }, [showTime, trip, cards, zone]);
+
+  const gaps = useMemo(
+    () => (showTime ? stackGaps(trip, boardZone, visible) : []),
+    [showTime, trip, boardZone, visible],
+  );
+
+  /** The day each card's frame claims, so a card can say when its own time
+   *  disagrees with the frame it is sitting in. */
+  const frameDays = useMemo(
+    () => new Map<ID, string | undefined>(cards.map((s) => [s.id, frameDayFor(trip, s)])),
+    [cards, trip],
   );
 
   const issueBySegment = useMemo(() => {
@@ -242,6 +302,63 @@ export function CanvasView({
     setView(fitTo(contentBounds(trip), el.clientWidth, el.clientHeight));
   }, [trip]);
 
+  /** Zoom about the middle of the viewport, which is what both the buttons and
+   *  the keys want — the wheel zooms about the cursor instead. */
+  const zoomBy = useCallback((factor: number) => {
+    const el = hostRef.current;
+    if (el) setView((v) => zoomAt(v, el.clientWidth / 2, el.clientHeight / 2, factor));
+  }, []);
+
+  /** Delete whatever is selected. One thing at a time, in the order the board
+   *  offers it: a connector, a note or a frame is selected on its own, and
+   *  otherwise it is the cards. */
+  const deleteSelection = useCallback(() => {
+    if (selLink) { handlers.onUnlink([selLink]); setSelLink(null); return true; }
+    if (selSticky) { handlers.onDeleteSticky(selSticky); setSelSticky(null); return true; }
+    if (selFrame) { handlers.onDeleteFrame(selFrame); setSelFrame(null); return true; }
+    const ids = [...selection];
+    if (!ids.length) return false;
+    handlers.onDeleteCards(ids);
+    setSel([]);
+    handlers.onSelect(null);
+    setTimeCard(null);
+    return true;
+  }, [handlers, selLink, selSticky, selFrame, selection]);
+
+  /** Pin or unpin the selection. A mixed selection pins, which is the
+   *  forgiving way round. Shared by the toolbar button and `P`. */
+  const togglePin = useCallback(() => {
+    const ids = [...selection];
+    if (!ids.length) return;
+    const allPinned = ids.every((id) => live.current.trip.segments.find((x) => x.id === id)?.pinned);
+    handlers.onPin(ids, !allPinned);
+    handlers.onAnnounce(
+      `${ids.length} ${ids.length === 1 ? 'card' : 'cards'} ${allPinned ? 'unpinned' : 'pinned'}.`,
+    );
+  }, [handlers, selection]);
+
+  /** Move the selection by hand, without a pointer. One press is one cell of
+   *  the dot grid, which is the unit the board is drawn on; Shift is the fine
+   *  step for lining two cards up. */
+  const nudge = useCallback((dx: number, dy: number) => {
+    const ids = [...selection];
+    if (!ids.length) return false;
+    handlers.onMoveCards(ids, dx, dy);
+    const first = live.current.trip.segments.find((s) => s.id === ids[0]);
+    const landed = first?.at
+      ? frameAt(live.current.trip, { x: first.at.x + dx + CARD_W / 2, y: first.at.y + dy + CARD_H / 2 })
+      : undefined;
+    handlers.onAnnounce(
+      `Moved ${ids.length === 1 ? `“${first?.title ?? 'card'}”` : `${ids.length} cards`}` +
+      `${landed ? ` into ${landed.title}` : ''}.`,
+    );
+    return true;
+  }, [handlers, selection]);
+
+  /* The board's keyboard. Everything the pointer can do here, a key can do
+     too — including moving a card, which is the whole point of the board and
+     was otherwise pointer-only. Listed in `KeyboardHelp`; keep the two in
+     step. */
   useEffect(() => {
     const typing = () => {
       const a = document.activeElement;
@@ -249,22 +366,80 @@ export function CanvasView({
     };
     const down = (e: KeyboardEvent) => {
       if (e.code === 'Space' && !typing()) { setSpaceDown(true); e.preventDefault(); return; }
-      if (typing() || e.metaKey || e.ctrlKey) return;
-      const map: Record<string, Tool> = { v: 'select', h: 'hand', c: 'card', n: 'note', f: 'frame', l: 'connect' };
-      const next = map[e.key.toLowerCase()];
-      if (next) { setTool(next); return; }
-      if (e.key === 'Escape') { setSel([]); setSelLink(null); setSelSticky(null); setSelFrame(null); setTool('select'); }
-      if ((e.key === 'Delete' || e.key === 'Backspace')) {
-        if (selLink) { handlers.onUnlink([selLink]); setSelLink(null); e.preventDefault(); }
-        else if (selSticky) { handlers.onDeleteSticky(selSticky); setSelSticky(null); e.preventDefault(); }
-        else if (selFrame) { handlers.onDeleteFrame(selFrame); setSelFrame(null); e.preventDefault(); }
+      if (typing()) return;
+
+      // The two combos the board claims. Everything else with a modifier
+      // belongs to the app — undo, redo, the palette.
+      if (e.metaKey || e.ctrlKey) {
+        if (e.key.toLowerCase() === 'a') {
+          const all = cards.map((c) => c.id);
+          setSel(all);
+          handlers.onSelect(all[all.length - 1] ?? null);
+          handlers.onAnnounce(`${all.length} ${all.length === 1 ? 'card' : 'cards'} selected.`);
+          e.preventDefault();
+        } else if (e.key === 'Enter') {
+          handlers.onResolve();
+          e.preventDefault();
+        }
+        return;
+      }
+      if (e.altKey) return;
+
+      const step = e.shiftKey ? FINE_STEP : GRID_STEP;
+      const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+
+      // Tools are unshifted single letters, so Shift+F is free to mean
+      // something else later.
+      if (!e.shiftKey && TOOL_KEYS[key]) { setTool(TOOL_KEYS[key]); e.preventDefault(); return; }
+
+      switch (key) {
+        case 'Escape':
+          setSel([]); setSelLink(null); setSelSticky(null); setSelFrame(null);
+          setTimeCard(null); setTool('select');
+          return;
+        case 'Delete':
+        case 'Backspace':
+          if (deleteSelection()) e.preventDefault();
+          return;
+        case 'ArrowUp': if (nudge(0, -step)) e.preventDefault(); return;
+        case 'ArrowDown': if (nudge(0, step)) e.preventDefault(); return;
+        case 'ArrowLeft': if (nudge(-step, 0)) e.preventDefault(); return;
+        case 'ArrowRight': if (nudge(step, 0)) e.preventDefault(); return;
+        case 'p':
+          togglePin();
+          e.preventDefault();
+          return;
+        case 't': {
+          // The time editor, reachable without a pointer. One card at a time:
+          // it edits that card's own clock.
+          const ids = [...selection];
+          if (ids.length !== 1) return;
+          setTimeCard((cur) => (cur === ids[0] ? null : ids[0]));
+          e.preventDefault();
+          return;
+        }
+        case '+':
+        case '=':
+          zoomBy(1.25);
+          e.preventDefault();
+          return;
+        case '-':
+        case '_':
+          zoomBy(1 / 1.25);
+          e.preventDefault();
+          return;
+        case '0':
+          fit();
+          handlers.onAnnounce('Whole board in view.');
+          e.preventDefault();
+          return;
       }
     };
     const up = (e: KeyboardEvent) => { if (e.code === 'Space') setSpaceDown(false); };
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
-  }, [handlers, selLink, selSticky, selFrame]);
+  }, [handlers, cards, selection, deleteSelection, nudge, togglePin, fit, zoomBy]);
 
   // Fit once, as soon as there is something to fit to.
   const fitted = useRef(false);
@@ -280,6 +455,7 @@ export function CanvasView({
 
   const selectCard = (id: ID, additive: boolean) => {
     clearOthers();
+    setTimeCard((cur) => (cur === id ? cur : null));
     if (!additive) { setSel([id]); handlers.onSelect(id); return; }
     setSel((prev) => {
       const base = prev.length ? prev : selectedId ? [selectedId] : [];
@@ -295,6 +471,7 @@ export function CanvasView({
 
   const onSurfacePointerDown = (e: React.PointerEvent) => {
     if ((e.target as HTMLElement).closest('[data-board-item]')) return;
+    setTimeCard(null);
     const p = screenToWorld(e.clientX, e.clientY);
 
     if (panning || e.button === 1) {
@@ -402,14 +579,20 @@ export function CanvasView({
       <Toolbar
         tool={tool} onTool={setTool}
         zoom={view.zoom}
-        onZoom={(f) => {
-          const el = hostRef.current;
-          if (el) setView((v) => zoomAt(v, el.clientWidth / 2, el.clientHeight / 2, f));
-        }}
+        onZoom={zoomBy}
         onFit={fit}
         onReset={() => setView((v) => ({ ...v, zoom: 1 }))}
         selection={selection.size}
         showFlows={showFlows} onFlows={() => setShowFlows((f) => !f)}
+        showTime={showTime}
+        onTime={() => {
+          // Announce and close outside the updater: React may run an updater
+          // during a render, and setting App's state from there is a bug.
+          const on = !showTime;
+          setShowTime(on);
+          if (!on) setTimeCard(null);
+          handlers.onAnnounce(on ? 'Times shown on the board.' : 'Times hidden.');
+        }}
         shelfOpen={shelfOpen} onShelf={() => setShelfOpen((o) => !o)}
         onTidy={handlers.onTidy}
         onResolve={handlers.onResolve}
@@ -421,13 +604,9 @@ export function CanvasView({
           const label = (place?.name ?? chosen[0]?.title ?? '').split(/[·(]/)[0].trim();
           setBranchDraft({ name: label ? `${label.slice(0, 26)} group` : 'Side trip', ids });
         }}
-        onPin={() => {
-          const ids = [...selection];
-          const allPinned = ids.every((id) => trip.segments.find((s) => s.id === id)?.pinned);
-          handlers.onPin(ids, !allPinned);
-        }}
+        onPin={togglePin}
         pinned={[...selection].every((id) => trip.segments.find((s) => s.id === id)?.pinned)}
-        onDelete={() => { handlers.onDeleteCards([...selection]); setSel([]); handlers.onSelect(null); }}
+        onDelete={deleteSelection}
         branches={trip.branches}
         onFocusBranch={(id) => {
           const frame = trip.frames.find((f) => f.branchId === id);
@@ -458,7 +637,9 @@ export function CanvasView({
             {/* frames sit behind everything */}
             {(trip.frames ?? []).map((f) => (
               <FrameBox
-                key={f.id} frame={f} trip={trip}
+                key={f.id} frame={f} trip={trip} zone={zone}
+                summary={daySummaries.get(f.id)}
+                onPickCard={(id) => selectCard(id, false)}
                 selected={selFrame === f.id}
                 delta={drag?.kind === 'frame' && drag.id === f.id ? frameDelta : null}
                 resizing={drag?.kind === 'resize' && drag.id === f.id ? drag.to : null}
@@ -614,12 +795,27 @@ export function CanvasView({
                 wired={linked.has(seg.id) || isScheduled(trip, seg)}
                 issues={issueBySegment.get(seg.id) ?? []}
                 connectMode={tool === 'connect'}
+                showTime={showTime}
+                offDay={
+                  !!frameDays.get(seg.id) && dateKey(seg.start, boardZone) !== frameDays.get(seg.id)
+                }
+                framed={!!frameDays.get(seg.id)}
+                timeOpen={timeCard === seg.id}
+                onOpenTime={() => setTimeCard((cur) => (cur === seg.id ? null : seg.id))}
+                onCloseTime={() => setTimeCard(null)}
+                onSetTime={(start, end) => handlers.onSetTime(seg.id, start, end)}
                 onSelect={(additive) => selectCard(seg.id, additive)}
                 onGrab={(e) => startCardDrag(seg.id, e)}
                 onConnect={(e) => startConnect(seg.id, e)}
                 onHoverPerson={setHoverPerson}
                 onTogglePin={() => handlers.onPin([seg.id], !seg.pinned)}
               />
+            ))}
+
+            {/* what the board is leaving between two stacked cards. Hidden mid-drag:
+                until the card lands, the number would be about where it was. */}
+            {!drag && gaps.map((gap) => (
+              gap.gutter >= 16 && !gap.linked ? <GapChip key={gap.key} gap={gap} /> : null
             ))}
 
             {/* marquee */}
@@ -669,7 +865,10 @@ export function CanvasView({
           <aside className="bd__shelf" aria-label="Places">
             <div className="row row--between">
               <h3 className="bd__shelfhead">Add a place</h3>
-              <button className="btn btn--icon btn--sm btn--ghost" onClick={() => setShelfOpen(false)} aria-label="Close places panel">
+              <button
+                className="btn btn--icon btn--sm btn--ghost" onClick={() => setShelfOpen(false)}
+                title="Close the places panel" aria-label="Close places panel"
+              >
                 <IconClose size={14} />
               </button>
             </div>
@@ -711,6 +910,7 @@ export function CanvasView({
                           <a
                             className="bd__placelink" href={p.url} target="_blank" rel="noreferrer noopener"
                             onClick={(e) => e.stopPropagation()}
+                            title={`Open ${p.name} in maps, in a new tab`}
                             aria-label={`Open ${p.name} in maps`}
                           >
                             <IconLink size={12} />
@@ -755,58 +955,91 @@ export function CanvasView({
 /* ============================================================ */
 
 function Toolbar({
-  tool, onTool, zoom, onZoom, onFit, onReset, selection, showFlows, onFlows, shelfOpen, onShelf,
-  onTidy, onResolve, onSubTrip, onPin, pinned, onDelete, branches, onFocusBranch,
+  tool, onTool, zoom, onZoom, onFit, onReset, selection, showFlows, onFlows, showTime, onTime,
+  shelfOpen, onShelf, onTidy, onResolve, onSubTrip, onPin, pinned, onDelete, branches, onFocusBranch,
 }: {
   tool: Tool; onTool: (t: Tool) => void;
   zoom: number; onZoom: (factor: number) => void; onFit: () => void; onReset: () => void;
   selection: number;
   showFlows: boolean; onFlows: () => void;
+  showTime: boolean; onTime: () => void;
   shelfOpen: boolean; onShelf: () => void;
   onTidy: () => void; onResolve: () => void; onSubTrip: () => void;
   onPin: () => void; pinned: boolean; onDelete: () => void;
   branches: Trip['branches'];
   onFocusBranch: (id: ID) => void;
 }) {
-  const tools: { id: Tool; label: string; key: string; Icon: (p: { size?: number }) => ReactElement }[] = [
-    { id: 'select', label: 'Select', key: 'V', Icon: IconTarget },
-    { id: 'hand', label: 'Pan', key: 'H', Icon: IconGrab },
-    { id: 'card', label: 'Card', key: 'C', Icon: IconPlus },
-    { id: 'note', label: 'Note', key: 'N', Icon: IconBoard },
-    { id: 'frame', label: 'Frame', key: 'F', Icon: IconBoard },
-    { id: 'connect', label: 'Connect', key: 'L', Icon: IconLink },
+  /* Every icon says what it does on hover, and what key gets you there — an
+     icon-only control the pointer cannot explain is a guessing game. */
+  const tools: {
+    id: Tool; label: string; hint: string;
+    Icon: (p: { size?: number }) => ReactElement;
+  }[] = [
+    { id: 'select', label: 'Select', Icon: IconTarget,
+      hint: 'Click a card, or drag a box round several' },
+    { id: 'hand', label: 'Pan', Icon: IconGrab,
+      hint: 'Drag the board about — or hold Space with any tool' },
+    { id: 'card', label: 'Card', Icon: IconPlus,
+      hint: 'Click anywhere to drop a new card there' },
+    { id: 'note', label: 'Note', Icon: IconNote,
+      hint: 'Click to leave a sticky note — a thought, not a plan' },
+    { id: 'frame', label: 'Frame', Icon: IconFrame,
+      hint: 'Drag out a region to group cards together' },
+    { id: 'connect', label: 'Connect', Icon: IconLink,
+      hint: 'Drag from one card to another to say what follows what' },
   ];
 
   return (
     <div className="bd__tools">
       <div className="bd__toolgroup" role="toolbar" aria-label="Board tools">
-        {tools.map((t) => (
-          <button
-            key={t.id} className="bd__tool" aria-pressed={tool === t.id}
-            onClick={() => onTool(t.id)}
-            title={`${t.label} · ${t.key}`}
-            aria-label={`${t.label} tool, shortcut ${t.key}`}
-          >
-            <t.Icon size={15} />
-          </button>
-        ))}
+        {tools.map((t) => {
+          const key = shortcutFor(t.id);
+          return (
+            <button
+              key={t.id} className="bd__tool" aria-pressed={tool === t.id}
+              onClick={() => onTool(t.id)}
+              title={`${t.label} · ${key}\n${t.hint}`}
+              aria-label={`${t.label} tool, shortcut ${key}`}
+            >
+              <t.Icon size={15} />
+            </button>
+          );
+        })}
       </div>
 
       <span className="bd__sep" role="separator" />
 
-      <button className="btn btn--sm" aria-pressed={shelfOpen} onClick={onShelf}>
+      <button
+        className="btn btn--sm" aria-pressed={shelfOpen} onClick={onShelf}
+        title="Search for a place, or paste a Google Maps link — picking one drops a card on the board"
+      >
         <IconSearch size={14} /> Places
       </button>
-      <button className="btn btn--sm" aria-pressed={showFlows} onClick={onFlows} title="Show who goes from what to what">
+      <button
+        className="btn btn--sm" aria-pressed={showFlows} onClick={onFlows}
+        title="Show who goes from what to what, bundled — derived from attendance, not from the connectors you drew"
+      >
         People flows
+      </button>
+      <button
+        className="btn btn--sm" aria-pressed={showTime} onClick={onTime}
+        title="Show the clock: the shape of each day under its frame, and the gap between stacked cards"
+      >
+        <IconClock size={14} /> Times
       </button>
 
       <span className="bd__sep" role="separator" />
 
-      <button className="btn btn--sm" onClick={onTidy} title="Lay the board out from the schedule: a frame per day, in time order">
+      <button
+        className="btn btn--sm" onClick={onTidy}
+        title="Lay the board out from the schedule: a frame per day, in time order"
+      >
         Tidy
       </button>
-      <button className="btn btn--sm btn--primary" onClick={onResolve} title="Read the board and give every framed or wired card a time">
+      <button
+        className="btn btn--sm btn--primary" onClick={onResolve}
+        title={'Resolve · \u2318\u21B5\nRead the board and give every framed or wired card a time'}
+      >
         <IconSparkle size={14} /> Resolve to timeline
       </button>
 
@@ -814,11 +1047,23 @@ function Toolbar({
         <>
           <span className="bd__sep" role="separator" />
           <span className="bd__count">{selection} selected</span>
-          <button className="btn btn--sm" onClick={onSubTrip}><IconBoard size={14} /> Sub-trip</button>
-          <button className="btn btn--sm" onClick={onPin} aria-pressed={pinned} title="A pinned card keeps its time when the board resolves">
+          <button
+            className="btn btn--sm" onClick={onSubTrip}
+            title="Split these off as a sub-trip — a frame goes round them and only the people you pick go"
+          >
+            <IconBoard size={14} /> Sub-trip
+          </button>
+          <button
+            className="btn btn--sm" onClick={onPin} aria-pressed={pinned}
+            title={'Pin · P\nA pinned card keeps its time when the board resolves'}
+          >
             <IconLock size={13} /> {pinned ? 'Unpin' : 'Pin time'}
           </button>
-          <button className="btn btn--sm btn--ghost" onClick={onDelete} aria-label="Delete selected cards">
+          <button
+            className="btn btn--sm btn--ghost" onClick={onDelete}
+            title={'Delete · \u232B\nRemove the selected cards from the trip'}
+            aria-label="Delete the selected cards"
+          >
             <IconTrash size={13} />
           </button>
         </>
@@ -841,10 +1086,25 @@ function Toolbar({
       )}
 
       <span className="bd__zoom">
-        <button className="btn btn--icon btn--sm btn--ghost" onClick={() => onZoom(1 / 1.25)} aria-label="Zoom out"><IconZoomOut size={14} /></button>
-        <button className="bd__zoomv mono" onClick={onReset} title="Reset to 100%">{Math.round(zoom * 100)}%</button>
-        <button className="btn btn--icon btn--sm btn--ghost" onClick={() => onZoom(1.25)} aria-label="Zoom in"><IconZoomIn size={14} /></button>
-        <button className="btn btn--sm btn--ghost" onClick={onFit}>Fit</button>
+        <button
+          className="btn btn--icon btn--sm btn--ghost" onClick={() => onZoom(1 / 1.25)}
+          title={'Zoom out · \u2212'} aria-label="Zoom out"
+        >
+          <IconZoomOut size={14} />
+        </button>
+        <button className="bd__zoomv mono" onClick={onReset} title="Back to 100%">{Math.round(zoom * 100)}%</button>
+        <button
+          className="btn btn--icon btn--sm btn--ghost" onClick={() => onZoom(1.25)}
+          title={'Zoom in · +'} aria-label="Zoom in"
+        >
+          <IconZoomIn size={14} />
+        </button>
+        <button
+          className="btn btn--sm btn--ghost" onClick={onFit}
+          title={'Fit · 0\nBring the whole board into view'}
+        >
+          Fit
+        </button>
       </span>
     </div>
   );
@@ -852,16 +1112,27 @@ function Toolbar({
 
 function BoardCard({
   seg, rect, trip, zone, selected, dim, dropTarget, wired, issues, connectMode,
-  onSelect, onGrab, onConnect, onHoverPerson, onTogglePin,
+  showTime, offDay, framed, timeOpen,
+  onSelect, onGrab, onConnect, onHoverPerson, onTogglePin, onOpenTime, onCloseTime, onSetTime,
 }: {
   seg: Segment; rect: Rect; trip: Trip; zone: string;
   selected: boolean; dim: boolean; dropTarget: boolean; wired: boolean;
   issues: Issue[]; connectMode: boolean;
+  showTime: boolean;
+  /** Sitting in a day frame that says another date — resolving will move it. */
+  offDay: boolean;
+  /** In a day frame at all. When it is, the frame carries the date and the
+   *  card need only carry the clock. */
+  framed: boolean;
+  timeOpen: boolean;
   onSelect: (additive: boolean) => void;
   onGrab: (e: React.PointerEvent) => void;
   onConnect: (e: React.PointerEvent) => void;
   onHoverPerson: (id: ID | null) => void;
   onTogglePin: () => void;
+  onOpenTime: () => void;
+  onCloseTime: () => void;
+  onSetTime: (start: Epoch, end: Epoch) => void;
 }) {
   const place = trip.places.find((p) => p.id === (seg.placeId ?? seg.toPlaceId ?? seg.fromPlaceId));
   const branch = trip.branches.find((b) => b.id === seg.branchId);
@@ -880,13 +1151,19 @@ function BoardCard({
       data-drop={dropTarget || undefined}
       data-status={seg.status}
       data-loose={!wired && !seg.pinned ? 'yes' : undefined}
+      data-offday={offDay || undefined}
       style={{
         left: rect.x, top: rect.y, width: rect.w, height: rect.h,
         ...(seg.color ? { ['--c' as string]: seg.color } : null),
         ...(branch ? { ['--bc' as string]: branch.color } : null),
       }}
       tabIndex={0}
-      aria-label={`${seg.title}, ${fmtDate(seg.start, zone, 'medium')} ${fmtTime(seg.start, { zone })}, ${people.length} people${worst ? `, has a ${worst}` : ''}`}
+      aria-label={
+        `${seg.title}, ${fmtDate(seg.start, zone, 'medium')} ` +
+        `${fmtTime(seg.start, { zone })} to ${fmtTime(seg.end, { zone })}, ` +
+        `${people.length} people${offDay ? ', timed for another date than its frame' : ''}` +
+        `${worst ? `, has a ${worst}` : ''}`
+      }
       onPointerDown={(e) => {
         if ((e.target as HTMLElement).closest('.bdc__port, .bdc__pin')) return;
         e.stopPropagation();
@@ -899,10 +1176,37 @@ function BoardCard({
       <span className="bdc__spine" />
 
       <header className="bdc__head">
-        <span className="bdc__time mono">
-          {fmtDate(seg.start, zone, 'short')} · {fmtTime(seg.start, { zone })}
-          <span className="bdc__dur">{fmtDuration(seg.end - seg.start)}</span>
-        </span>
+        {showTime ? (
+          <button
+            className="bdc__time bdc__time--live mono"
+            data-off={offDay || undefined}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onOpenTime(); }}
+            aria-expanded={timeOpen}
+            title={
+              offDay
+                ? `Timed for ${fmtDate(seg.start, zone, 'medium')}, but sitting in a frame for another day — ` +
+                  'resolving will move it. Click to set the time.'
+                : 'Click to set the time'
+            }
+            aria-label={`${fmtTime(seg.start, { zone })} to ${fmtTime(seg.end, { zone })}. Set the time.`}
+          >
+            {/* When the card agrees with its frame, the frame carries the date
+                and the card only has to carry the clock. */}
+            {(!framed || offDay) && (
+              <span className="bdc__date" data-off={offDay || undefined}>{fmtDate(seg.start, zone, 'short')}</span>
+            )}
+            <span>{fmtTime(seg.start, { zone })}–{fmtTime(seg.end, { zone })}</span>
+            {framed && !offDay && (
+              <span className="bdc__dur">· {compactDuration(seg.end - seg.start)}</span>
+            )}
+          </button>
+        ) : (
+          <span className="bdc__time mono">
+            {fmtDate(seg.start, zone, 'short')} · {fmtTime(seg.start, { zone })}
+            <span className="bdc__dur">{fmtDuration(seg.end - seg.start)}</span>
+          </span>
+        )}
         {worst && (
           <span className={`bdc__warn bdc__warn--${worst}`} title={issues[0]?.title}>
             <IconWarn size={11} />
@@ -942,6 +1246,10 @@ function BoardCard({
         {seg.status === 'tentative' && <span className="bdc__tent" title="Tentative">?</span>}
       </footer>
 
+      {timeOpen && (
+        <TimePop seg={seg} zone={zone} offDay={offDay} onSet={onSetTime} onClose={onCloseTime} />
+      )}
+
       {/* four ports, the FigJam gesture: drag one onto another card */}
       {(['top', 'right', 'bottom', 'left'] as const).map((side) => (
         <button
@@ -957,9 +1265,12 @@ function BoardCard({
 }
 
 function FrameBox({
-  frame, trip, selected, delta, resizing, onSelect, onGrab, onResize, onRename, onDelete, onDissolveBranch,
+  frame, trip, zone, summary, selected, delta, resizing,
+  onSelect, onGrab, onResize, onRename, onDelete, onDissolveBranch, onPickCard,
 }: {
-  frame: Frame; trip: Trip; selected: boolean;
+  frame: Frame; trip: Trip; zone: string; selected: boolean;
+  /** The clock read off the cards inside, when the time layer is on. */
+  summary: DaySummary | undefined;
   delta: { dx: number; dy: number } | null;
   resizing: Point | null;
   onSelect: () => void;
@@ -968,6 +1279,7 @@ function FrameBox({
   onRename: (title: string) => void;
   onDelete: () => void;
   onDissolveBranch: () => void;
+  onPickCard: (id: ID) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const branch = trip.branches.find((b) => b.id === frame.branchId);
@@ -1008,7 +1320,11 @@ function FrameBox({
           <span className="bdf__title truncate">{frame.title}</span>
         )}
         <span className="bdf__meta">
-          {frame.dayKey && <span className="bdf__tag">day</span>}
+          {frame.dayKey && (
+            <span className="bdf__tag bdf__tag--day" title="Everything in this frame happens on this date">
+              {fmtDate(dateKeyToEpoch(frame.dayKey, zone), zone, 'medium')}
+            </span>
+          )}
           {branch && <span className="bdf__tag bdf__tag--branch">{branchMembers(trip, branch).length} away</span>}
           <span className="bdf__n">{count}</span>
         </span>
@@ -1030,6 +1346,7 @@ function FrameBox({
         className="bdf__resize" aria-label={`Resize ${frame.title}`}
         onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); onResize(e); }}
       />
+      {summary && <DayRibbon summary={summary} zone={zone} onPick={onPickCard} />}
     </section>
   );
 }
@@ -1071,7 +1388,10 @@ function StickyNote({
         <p className="bds__text">{note.text || 'Double-click to write'}</p>
       )}
       {selected && !editing && (
-        <button className="bds__x" onClick={onDelete} onPointerDown={(e) => e.stopPropagation()} aria-label="Delete note">
+        <button
+          className="bds__x" onClick={onDelete} onPointerDown={(e) => e.stopPropagation()}
+          title={'Delete this note · \u232B'} aria-label="Delete note"
+        >
           <IconClose size={11} />
         </button>
       )}
@@ -1087,7 +1407,7 @@ function LinkChip({
 }) {
   const from = trip.segments.find((s) => s.id === link.fromId);
   const to = trip.segments.find((s) => s.id === link.toId);
-  const gap = from && to ? (to.start - from.end) / MIN : 0;
+  const gap = from && to ? to.start - from.end : 0;
 
   return (
     <div
@@ -1100,11 +1420,16 @@ function LinkChip({
       </button>
       {gap !== 0 && (
         <span className="bdl__gap mono" title={`Gap between them right now, in ${zone}`}>
-          {gap < 0 ? 'overlaps' : fmtDuration(gap * MIN)}
+          {gap < 0 ? `overlaps ${compactDuration(-gap)}` : compactDuration(gap)}
         </span>
       )}
       {selected && (
-        <button className="bdl__x" onClick={onDelete} aria-label="Delete connector"><IconClose size={10} /></button>
+        <button
+          className="bdl__x" onClick={onDelete}
+          title={'Delete this connector · \u232B'} aria-label="Delete connector"
+        >
+          <IconClose size={10} />
+        </button>
       )}
     </div>
   );
