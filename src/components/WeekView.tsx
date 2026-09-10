@@ -3,34 +3,36 @@
 
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type { ClockMode, ID, Issue, Segment, Trip } from '../core/types';
-import { DAY, dateKey, dateKeyToEpoch, eachDay, fmtDate, fmtTime, toParts } from '../core/time';
+import { DAY, dateKey, dateKeyToEpoch, fmtDate, fmtTime, toParts } from '../core/time';
+import { tripDayKeys } from '../core/layout';
 import { attendeesOf } from '../core/schedule';
 import { axisZone } from '../core/clock';
 import { iconFor } from '../core/ics';
 import { describeSegment, initials } from './SegmentChrome';
+import { IconPlus } from './Icons';
 
 /** How many blocks a day cell shows before it defers to the day view. */
 const MAX_PILLS = 6;
 
 export function WeekView({
-  trip, segments, clock, selectedId, issues, now, onSelect, onShiftDays, onAnnounce, onOpenDay,
+  trip, segments, clock, selectedId, issues, now,
+  onSelect, onShiftDays, onAnnounce, onOpenDay, onAddOnDay,
 }: {
   trip: Trip; segments: Segment[]; clock: ClockMode; selectedId: ID | null; issues: Issue[]; now: number;
   onSelect: (id: ID) => void;
   onShiftDays: (id: ID, days: number) => void;
   onAnnounce: (t: string) => void;
   onOpenDay: (key: string) => void;
+  /** Add straight into a day cell, so the whole-trip view can build a plan
+   *  rather than only rearrange one. */
+  onAddOnDay: (key: string) => void;
 }) {
   const zone = axisZone(clock, trip);
   const cellRefs = useRef(new Map<string, HTMLDivElement>());
   const [dragging, setDragging] = useState<{ id: ID; fromKey: string; overKey: string } | null>(null);
 
-  const days = useMemo(() => {
-    if (!segments.length) return eachDay(Date.now(), Date.now() + 6 * DAY, zone);
-    const lo = Math.min(...segments.map((s) => s.start));
-    const hi = Math.max(...segments.map((s) => s.end));
-    return eachDay(lo, hi, zone);
-  }, [segments, zone]);
+  // The trip's own dates, so an empty plan still shows the days it is for.
+  const days = useMemo(() => tripDayKeys(trip, zone), [trip, zone]);
 
   const byDay = useMemo(() => {
     const m = new Map<string, Segment[]>();
@@ -88,12 +90,22 @@ export function WeekView({
                   type="button"
                   className="btn btn--ghost btn--sm"
                   onClick={() => onOpenDay(key)}
+                  title={`Open ${fmtDate(epoch, zone, 'medium')} hour by hour`}
                   aria-label={`Open ${fmtDate(epoch, zone, 'long')} in the day view`}
                 >
                   <span className="wk__date">{String(p.day).padStart(2, '0')}</span>
                   <span className="wk__dow">{fmtDate(epoch, zone, 'weekday')}</span>
                 </button>
                 {items.length > 0 && <span className="chip">{items.length}</span>}
+                <span className="grow" />
+                <button
+                  type="button" className="wk__add"
+                  onClick={() => onAddOnDay(key)}
+                  title={`Add something to ${fmtDate(epoch, zone, 'medium')}`}
+                  aria-label={`Add something to ${fmtDate(epoch, zone, 'long')}`}
+                >
+                  <IconPlus size={13} />
+                </button>
               </div>
 
               <ul className="wk__list">
@@ -147,7 +159,10 @@ export function WeekView({
               </ul>
 
               {hidden > 0 && (
-                <button type="button" className="wk__more" onClick={() => onOpenDay(key)}>
+                <button
+                  type="button" className="wk__more" onClick={() => onOpenDay(key)}
+                  title="This day has more than fits here — open it hour by hour"
+                >
                   {hidden} more →
                 </button>
               )}

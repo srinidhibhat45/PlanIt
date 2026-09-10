@@ -48,7 +48,10 @@ export function PeopleView({
             ? 'Nobody on the trip yet'
             : `${trip.people.length} ${trip.people.length === 1 ? 'person' : 'people'}`}
         </p>
-        <button className="btn btn--sm btn--primary" onClick={onAddPerson}>
+        <button
+          className="btn btn--sm btn--primary" onClick={onAddPerson}
+          title="Add someone to the trip — their home city and dates, so the plan can be checked against them"
+        >
           <IconPlus size={14} /> Add someone
         </button>
       </div>
@@ -177,14 +180,23 @@ export function PeopleView({
                 type="button"
                 className="btn btn--sm"
                 aria-pressed={isFocused}
+                title={isFocused
+                  ? 'Go back to showing everybody'
+                  : `Narrow every view to what ${person.name.split(' ')[0]} actually does`}
                 onClick={() => onFocusPerson(isFocused ? null : person.id)}
               >
                 {isFocused ? 'Showing only them' : 'Focus on them'}
               </button>
-              <button type="button" className="btn btn--sm" onClick={() => onOpenPerson(person.id)}>
+              <button
+                type="button" className="btn btn--sm" onClick={() => onOpenPerson(person.id)}
+                title="Open the board on their trip alone"
+              >
                 Their itinerary
               </button>
-              <button type="button" className="btn btn--sm" onClick={() => onEditPerson(person.id)}>
+              <button
+                type="button" className="btn btn--sm" onClick={() => onEditPerson(person.id)}
+                title="Home city, dates they are available, dietary notes — everything the checks use"
+              >
                 Edit details
               </button>
               <button
@@ -193,7 +205,10 @@ export function PeopleView({
               >
                 <IconShare size={13} /> Give them a link
               </button>
-              <button type="button" className="btn btn--sm btn--ghost" onClick={() => onExport(person.id)}>
+              <button
+                type="button" className="btn btn--sm btn--ghost" onClick={() => onExport(person.id)}
+                title="Download their itinerary as an .ics file for any calendar app"
+              >
                 Calendar file
               </button>
             </div>

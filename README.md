@@ -212,6 +212,37 @@ Also on the board: **sticky notes** for the things that are not plans yet, a
 attendance and the clock rather than from anything you drew, bundled so four
 travellers making the same hop is one line carrying four faces.
 
+### Getting things in and out
+
+Every view can build the plan, not just read it out, and each one uses the
+gesture that suits its shape:
+
+| | |
+|---|---|
+| **Timeline** | Drag across an empty stretch of lane. The lane decides whose it is — a person lane assigns them, a type lane sets the type, a place lane sets the place. |
+| **Day** | The same gesture, downward. Snapped to the quarter-hour of the *displayed* zone, not of UTC. |
+| **Trip** and **Agenda** | Neither has an hour to point at, so each day gets a **+** that drops a block on it at ten in the morning for you to move. |
+| **Canvas** | The card tool, or the places panel. |
+| **Ideas** | The backlog, promoted onto a day when it stops being a maybe. |
+
+A press with no drag makes the default hour, so the gesture works before you
+know it is a drag. <kbd>Esc</kbd> mid-draw abandons it.
+
+Removing is <kbd>⌫</kbd> on the selection, from any view, with an undo in the
+toast — it used to be a trip to the details panel. On the board it also deletes
+notes, frames and connectors, because those are selectable there too.
+
+People are added where people already are: the **+ Add someone** button under
+the rail's list, the row below the last lane on the timeline (a lane per person
+means another lane *is* another person), and the People view.
+
+**Where a view opens.** On the day the trip starts — or today, if the trip is
+happening now. Deliberately not the first day of the *span*: a block left on
+today's date by accident should not drag a fortnight of planning back with it,
+and since the day cursor is also where the **Add** button drops a block, getting
+it wrong compounds. `tripSpan` widens to cover anything scheduled outside the
+trip's dates, so nothing is ever hidden — it just does not decide the view.
+
 ### Sub-trips
 
 Half the group goes to the beach while the rest stay for the second day of
@@ -329,6 +360,7 @@ list lives behind <kbd>?</kbd>.
 | <kbd>?</kbd> | Shortcut help |
 | <kbd>1</kbd>–<kbd>7</kbd> | Jump to a view |
 | <kbd>N</kbd> | New block (except on the board, where N is the note tool) |
+| <kbd>⌫</kbd> | Delete the selected block |
 | <kbd>/</kbd> | Search |
 | <kbd>[</kbd> <kbd>]</kbd> | Previous / next day |
 | <kbd>\</kbd> | Toggle the filter rail |

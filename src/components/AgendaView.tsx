@@ -11,12 +11,16 @@ import { KIND_LABEL } from '../core/layout';
 import { axisZone, resolveZone } from '../core/clock';
 import { iconFor } from '../core/ics';
 import { initials } from './SegmentChrome';
+import { IconPlus } from './Icons';
 
 export function AgendaView({
-  trip, segments, clock, selectedId, focusPersonId, issues, onSelect,
+  trip, segments, clock, selectedId, focusPersonId, issues, onSelect, onAddOnDay,
 }: {
   trip: Trip; segments: Segment[]; clock: ClockMode; selectedId: ID | null;
   focusPersonId: ID | null; issues: Issue[]; onSelect: (id: ID) => void;
+  /** Every view needs a way to put something *into* the plan, not just read
+   *  it out — here it is the day you are looking at. */
+  onAddOnDay: (dayKey: string) => void;
 }) {
   const zone = axisZone(clock, trip);
 
@@ -64,6 +68,13 @@ export function AgendaView({
                   ? ` · ${fmtDuration(totalMin * MIN)} scheduled`
                   : ` · ${peopleOn} ${peopleOn === 1 ? 'person' : 'people'} · ${fmtDuration(totalMin * MIN)} combined`}
               </p>
+              <button
+                type="button" className="btn btn--sm btn--ghost agenda__add"
+                onClick={() => onAddOnDay(key)}
+                title={`Add something to ${fmtDate(dayEpoch, zone, 'medium')}`}
+              >
+                <IconPlus size={13} /> Add
+              </button>
             </header>
 
             <ol className="agenda__list">
@@ -82,6 +93,7 @@ export function AgendaView({
                       type="button"
                       className="agenda__item"
                       data-kind={seg.kind}
+                      title="Open this block's details"
                       aria-selected={selectedId === seg.id}
                       onClick={() => onSelect(seg.id)}
                     >

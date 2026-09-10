@@ -205,6 +205,55 @@
     repeating-linear-gradient(90deg, var(--grid-line-major) 0 1px, transparent 1px calc(var(--hour-w) * 6));
 }
 .tl__track[data-droppable='over'] { background-color: var(--brand-soft); }
+/* A way into the plan from the read-only-feeling views. */
+.agenda__add { margin-left: auto; align-self: center; }
+
+.wk__add {
+  display: grid; place-items: center;
+  width: 1.4rem; height: 1.4rem; padding: 0;
+  border: 1px solid var(--line-2); border-radius: var(--r-1);
+  background: var(--bg-2); color: var(--ink-3); cursor: pointer;
+  opacity: 0; transition: opacity var(--dur-1) var(--ease-out);
+}
+.wk__cell:hover .wk__add, .wk__add:focus-visible { opacity: 1; }
+.wk__add:hover { color: var(--ink-1); border-color: var(--brand-line); background: var(--brand-soft); }
+
+/* Empty lane invites the gesture that fills it. */
+.tl__track { cursor: crosshair; }
+
+/* The block being drawn down a day column. */
+.dg__draft {
+  position: absolute; left: 3px; right: 3px; z-index: 5;
+  display: flex; align-items: flex-start; padding: 2px 5px;
+  border-radius: var(--r-1);
+  border: 1.5px dashed var(--brand);
+  background: var(--brand-soft);
+  pointer-events: none;
+}
+.dg__draftlabel { font-size: 0.62rem; font-weight: 650; color: var(--brand-ink); white-space: nowrap; }
+.dg__body { cursor: crosshair; }
+
+/* The row where the next person would go. */
+.tl__lane--add .tl__lanehead {
+  height: auto; padding: var(--s-2) var(--s-2) var(--s-3);
+  align-items: center;
+}
+.tl__addperson { width: 100%; justify-content: center; border-style: dashed; }
+.tl__track--empty { height: 1px; cursor: default; background: none; }
+
+/* The block being drawn out. Dashed, because it does not exist yet. */
+.tl__draft {
+  position: absolute; top: 4px; z-index: 5;
+  display: flex; align-items: center; padding: 0 6px;
+  border-radius: var(--r-1);
+  border: 1.5px dashed var(--brand);
+  background: var(--brand-soft);
+  pointer-events: none;
+}
+.tl__draftlabel {
+  font-size: 0.62rem; font-weight: 650; color: var(--brand-ink);
+  white-space: nowrap; overflow: hidden;
+}
 
 /* night shading so the eye reads sleep hours instantly */
 .tl__night {
@@ -584,6 +633,7 @@
   .agenda { max-width: none; padding: 0; }
   .agenda__day { break-inside: avoid; page-break-inside: avoid; }
   .agenda__dayhead { position: static; background: none; border-bottom: 2px solid #000; }
+  .agenda__add, .wk__add { display: none !important; }
   .agenda__item { border: 0; border-bottom: 1px solid #ccc; border-radius: 0; padding: 6pt 0; }
   .agenda__title::before { box-shadow: none; border: 1px solid #000; }
   .print-only { display: block !important; }

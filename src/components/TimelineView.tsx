@@ -10,18 +10,24 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ClockMode, Density, ID, Issue, LaneMode, Segment, Trip } from '../core/types';
-import { HOUR, MIN, addDays, dateKeyToEpoch, fmtDate, fmtRange, fmtDuration, snap, toParts } from '../core/time';
+import { HOUR, MIN, clamp, dateKeyToEpoch, fmtDate, fmtRange, fmtDuration, snap } from '../core/time';
 import {
-  ZOOMS, buildLanes, dayBands, hourTicks, makeScale, nightBands, snapStepFor, type Lane,
+  ZOOMS, buildLanes, dayBands, hourTicks, makeScale, nightBands, openingDay, snapStepFor,
+  tripSpan, type Lane,
 } from '../core/layout';
 import { estimateTravel, overheadMinutes, trafficLabel, travelMinutes } from '../core/travel';
 import { axisZone } from '../core/clock';
 import { useDrag } from '../hooks/useDrag';
 import { useMediaQuery } from '../hooks/useUi';
 import { SegmentChrome, describeSegment } from './SegmentChrome';
+import { IconPlus } from './Icons';
 
 const LANE_W = 208;
 const LANE_W_SMALL = 128;
+
+/** A press with no drag means "something here", not "something of no length",
+ *  so it gets the same default hour the day grid gives a clicked slot. */
+const DEFAULT_NEW_MIN = 60;
 
 export interface TimelineProps {
   trip: Trip;
@@ -40,12 +46,18 @@ export interface TimelineProps {
   onReassign: (id: ID, fromLane: string, toLane: string) => void;
   onAnnounce: (text: string) => void;
   onZoom: (i: number) => void;
+  /** Drag across an empty lane to add something to the plan there. `laneId` is
+   *  the lane it was drawn in, so it lands on the right person. */
+  onCreateRange: (start: number, end: number, laneId: string) => void;
+  /** A lane per person means the way to get another lane is another person. */
+  onAddPerson: () => void;
 }
 
 export function TimelineView(props: TimelineProps) {
   const {
     trip, segments, laneMode, clock, density, zoomIndex, issues, selectedId, now,
-    personFilter, onSelect, onMove, onResize, onReassign, onAnnounce, onZoom,
+    personFilter, onSelect, onMove, onResize, onReassign, onAnnounce, onZoom, onCreateRange,
+    onAddPerson,
   } = props;
 
   const narrow = useMediaQuery('(max-width: 60rem)');
@@ -59,13 +71,10 @@ export function TimelineView(props: TimelineProps) {
   const laneRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [focusedId, setFocusedId] = useState<ID | null>(null);
 
-  const range = useMemo(() => {
-    const first = segments.length ? Math.min(...segments.map((s) => s.start)) : Date.now();
-    const last = segments.length ? Math.max(...segments.map((s) => s.end)) : Date.now() + 6 * 864e5;
-    const start = dateKeyToEpoch(fmtIso(first, zone), zone);
-    const end = addDays(dateKeyToEpoch(fmtIso(last, zone), zone), 1, zone);
-    return { start, end };
-  }, [segments, zone]);
+  /* The axis is the trip's span, not the visible segments' — filtering to one
+     person must not rescale the plan under them, and an empty trip still opens
+     on its own dates rather than on this week. */
+  const range = useMemo(() => tripSpan(trip, zone, now), [trip, zone, now]);
 
   const scale = useMemo(
     () => makeScale(range.start, range.end, pxPerHour, zone),
@@ -82,6 +91,60 @@ export function TimelineView(props: TimelineProps) {
     for (const i of issues) if (i.severity === 'error') i.segmentIds.forEach((id) => s.add(id));
     return s;
   }, [issues]);
+
+  /* ---------- drawing a new block on an empty lane ---------- */
+
+  /* The plan has to get *into* the timeline somehow, and "open the details
+     panel and type two timestamps" is not it. Drawing the block where it goes
+     is: press on empty lane, drag out the hours, let go. A press with no drag
+     makes the default hour, the way clicking an empty slot does in the day
+     grid. */
+  const [draft, setDraft] = useState<{ lane: number; from: number; to: number } | null>(null);
+  const draftRef = useRef<typeof draft>(null);
+  draftRef.current = draft;
+
+  const startDraft = (e: React.PointerEvent, laneIndex: number) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    /* Blocks, their grips and the journey chips mean something else. The
+       away shading does not: it covers most of an arrival day, and the day
+       somebody arrives is exactly when you want to draw their airport run. */
+    if (target.closest('.seg, .tl__gap')) return;
+
+    const track = e.currentTarget as HTMLElement;
+    const left = track.getBoundingClientRect().left;
+    const at = snap(scale.t(e.clientX - left), snapMin, zone);
+    track.setPointerCapture(e.pointerId);
+    setDraft({ lane: laneIndex, from: at, to: at });
+
+    const move = (ev: PointerEvent) => {
+      setDraft((d) => (d ? { ...d, to: snap(scale.t(ev.clientX - left), snapMin, zone) } : d));
+    };
+    const finish = () => {
+      const d = draftRef.current;
+      cleanup();
+      setDraft(null);
+      if (!d) return;
+      const from = Math.min(d.from, d.to);
+      const to = Math.max(d.from, d.to);
+      const span = to - from < 15 * MIN ? DEFAULT_NEW_MIN * MIN : to - from;
+      const laneId = lanes[d.lane]?.id;
+      if (!laneId) return;
+      onCreateRange(from, from + span, laneId);
+    };
+    const abort = (ev: KeyboardEvent) => { if (ev.key === 'Escape') { cleanup(); setDraft(null); } };
+    const cleanup = () => {
+      track.releasePointerCapture?.(e.pointerId);
+      track.removeEventListener('pointermove', move);
+      track.removeEventListener('pointerup', finish);
+      track.removeEventListener('pointercancel', finish);
+      window.removeEventListener('keydown', abort);
+    };
+    track.addEventListener('pointermove', move);
+    track.addEventListener('pointerup', finish);
+    track.addEventListener('pointercancel', finish);
+    window.addEventListener('keydown', abort);
+  };
 
   /* ---------- dragging ---------- */
 
@@ -241,15 +304,19 @@ export function TimelineView(props: TimelineProps) {
     lastZoom.current = pxPerHour;
   }, [pxPerHour, range.start, laneW]);
 
-  /* ---------- scroll to now on first paint ---------- */
+  /* ---------- where the timeline opens ---------- */
 
+  /* On the day the trip starts, or on today if the trip is happening now —
+     never on the left edge of the axis, which can be earlier than either when
+     something is scheduled outside the trip's own dates. */
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const target = now >= range.start && now <= range.end ? now : range.start;
-    el.scrollLeft = Math.max(0, scale.x(target) - el.clientWidth * 0.3);
+    const opening = dateKeyToEpoch(openingDay(trip, zone, now), zone);
+    const target = clamp(opening, range.start, range.end);
+    el.scrollLeft = Math.max(0, scale.x(target) - el.clientWidth * 0.08);
     lastZoom.current = pxPerHour;
-    // Only on mount and when the trip range changes.
+    // Only on mount and when the trip's span changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range.start, range.end]);
 
@@ -327,6 +394,8 @@ export function TimelineView(props: TimelineProps) {
                 className="tl__track"
                 style={{ width: totalW, height: laneH }}
                 data-droppable={drag.state?.laneIndex === li && drag.state.originLane !== li ? 'over' : undefined}
+                title={`Drag across an empty stretch to add something to ${lane.label}`}
+                onPointerDown={(e) => startDraft(e, li)}
               >
                 {nights.map((n, i) => (
                   <div key={i} className="tl__night" style={{ left: scale.x(n.start), width: scale.x(n.end) - scale.x(n.start) }} />
@@ -432,6 +501,21 @@ export function TimelineView(props: TimelineProps) {
                   );
                 })}
 
+                {draft && draft.lane === li && (() => {
+                  const from = Math.min(draft.from, draft.to);
+                  const to = Math.max(draft.from, draft.to);
+                  const w = Math.max(2, scale.x(to) - scale.x(from));
+                  return (
+                    <div className="tl__draft" style={{ left: scale.x(from), width: w, height: rowH - 8 }}>
+                      {w > 84 && (
+                        <span className="tl__draftlabel mono">
+                          {fmtRange(from, to, { zone })}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 {li === 0 && now >= range.start && now <= range.end && (
                   <div className="tl__now" style={{ left: scale.x(now), height: laneH }} aria-hidden="true" />
                 )}
@@ -439,6 +523,22 @@ export function TimelineView(props: TimelineProps) {
             </div>
           );
         })}
+
+        {/* A lane per person, so the empty row at the bottom is how you get
+            another person. Nowhere else in the timeline says that. */}
+        {laneMode === 'person' && (
+          <div className="tl__lane tl__lane--add" role="row">
+            <div className="tl__lanehead" role="rowheader">
+              <button
+                className="btn btn--sm tl__addperson" onClick={onAddPerson}
+                title="Add someone to the trip — they get their own lane"
+              >
+                <IconPlus size={13} /> Add someone
+              </button>
+            </div>
+            <div className="tl__track tl__track--empty" style={{ width: totalW }} aria-hidden="true" />
+          </div>
+        )}
       </div>
 
       {/* live time readout while dragging with a pointer */}
@@ -489,11 +589,6 @@ function quantise(deltaMs: number, seg: Segment, mode: string, snapMin: number, 
   if (snapMin <= 0) return deltaMs;
   const base = mode === 'resize-end' ? seg.end : seg.start;
   return snap(base + deltaMs, snapMin, zone) - base;
-}
-
-function fmtIso(e: number, zone: string): string {
-  const p = toParts(e, zone);
-  return `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`;
 }
 
 /** The stretches at either end of a lane where this person is not on the trip

@@ -13,7 +13,7 @@ import { compressToEncodedURIComponent } from 'lz-string';
 import { analyse, attendeesOf, segmentsFor } from '../src/core/schedule';
 import { conferenceTrip } from '../src/data/conference';
 import { reducer, initialState } from '../src/core/store';
-import { packColumns } from '../src/core/layout';
+import { openingDay, packColumns, tripDayKeys, tripSpan } from '../src/core/layout';
 import { guessZone, isShortMapLink, isValidZone, parseMapLink, searchBuiltin } from '../src/core/geo';
 import { branchDepth, branchMembers, childBranches, mainSegments, segmentsInBranch, spanOf } from '../src/core/branch';
 import {
@@ -741,6 +741,60 @@ ok('isScheduled agrees with what resolve would touch',
 
 ok('every journey gets some slack by default', DEFAULT_RESOLVE.bufferMin > 0);
 
+
+/* ============ where a view opens ============ */
+
+/* A trip's own dates are the floor for every date-bearing view. Deriving the
+   span from the segments alone opened a fresh trip on *this week*, with the
+   trip itself off the right-hand edge — and, worse, put new blocks there. */
+const emptyTrip: Trip = {
+  ...trip, segments: [], startDate: '2026-10-20', endDate: '2026-10-24',
+};
+const emptySpan = tripSpan(emptyTrip, IST, Date.UTC(2026, 8, 10));
+eq('an empty trip spans its own dates', dateKey(emptySpan.start, IST), '2026-10-20');
+eq('through the end of the last day', dateKey(emptySpan.end - 1, IST), '2026-10-24');
+eq('and the day picker offers exactly those days',
+   tripDayKeys(emptyTrip, IST, Date.UTC(2026, 8, 10)).length, 5);
+
+/* Something scheduled outside the trip's dates widens the span rather than
+   being cropped out of every view. */
+const strays: Trip = {
+  ...emptyTrip,
+  segments: [{
+    ...trip.segments[0],
+    start: parseLocal('2026-10-18', '09:00', IST),
+    end: parseLocal('2026-10-18', '10:00', IST),
+  }],
+};
+eq('a block before the trip widens the span, not the other way round',
+   dateKey(tripSpan(strays, IST).start, IST), '2026-10-18');
+eq('and the trip still ends where it ends',
+   dateKey(tripSpan(strays, IST).end - 1, IST), '2026-10-24');
+
+/* But it must not decide where the view *opens*: one stray block a fortnight
+   early should not drag a whole trip's planning back with it. */
+eq('a view opens on the day the trip starts', openingDay(strays, IST, Date.UTC(2026, 8, 10)), '2026-10-20');
+eq('unless the trip is happening now, when today wins',
+   openingDay(strays, IST, parseLocal('2026-10-22', '09:00', IST)), '2026-10-22');
+eq('a day before the trip is not today enough',
+   openingDay(strays, IST, parseLocal('2026-10-19', '09:00', IST)), '2026-10-20');
+eq('nor is a day after it',
+   openingDay(strays, IST, parseLocal('2026-11-02', '09:00', IST)), '2026-10-20');
+
+/* A trip with no usable dates at all still has to answer. */
+const dateless = { ...emptyTrip, startDate: '', endDate: '' } as Trip;
+eq('a trip with no dates falls back to today',
+   openingDay(dateless, IST, parseLocal('2026-10-19', '09:00', IST)), '2026-10-19');
+eq('and spans the week from it',
+   tripDayKeys(dateless, IST, parseLocal('2026-10-19', '09:00', IST)).length, 7);
+
+/* The worked example is the real case: it must open on its first day. */
+eq('the example trip opens on its own first day',
+   openingDay(trip, IST, Date.UTC(2026, 8, 10)), trip.startDate);
+ok('and its span covers every one of its blocks', trip.segments.every((s) => {
+  const span = tripSpan(trip, IST);
+  return s.start >= span.start && s.end <= span.end;
+}));
 
 /* ============ the time layer ============ */
 

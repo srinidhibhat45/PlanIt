@@ -95,6 +95,58 @@ export const KIND_LABEL: Record<string, string> = {
 
 /* ---------- horizontal scale ---------- */
 
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const isDateKey = (key: string | undefined): key is string => !!key && ISO_DATE.test(key);
+
+/** The span a trip covers, worked out in one place.
+ *
+ *  The trip's *own* dates are the floor. A plan with nothing on it yet still
+ *  opens on the days it is for rather than on this week — which matters,
+ *  because a new trip defaults to a week out, and a timeline that opened on
+ *  today showed a fortnight of empty grid with the trip off the right-hand
+ *  edge. Anything scheduled outside those dates widens the span instead of
+ *  being cropped out of the view.
+ *
+ *  The returned `end` is exclusive: midnight after the last day. */
+export function tripSpan(trip: Trip, zone: Zone, fallbackNow = Date.now()): { start: Epoch; end: Epoch } {
+  const anchor = (key: string | undefined) => (isDateKey(key) ? dateKeyToEpoch(key, zone) : null);
+  const from = anchor(trip.startDate);
+  const to = anchor(trip.endDate);
+  const starts = [...(from === null ? [] : [from]), ...trip.segments.map((s) => s.start)];
+  const ends = [...(to === null ? [] : [to]), ...trip.segments.map((s) => s.end)];
+
+  if (!starts.length || !ends.length) {
+    const today = dateKeyToEpoch(dateKey(fallbackNow, zone), zone);
+    return { start: today, end: addDays(today, 7, zone) };
+  }
+  const first = dateKeyToEpoch(dateKey(Math.min(...starts), zone), zone);
+  const last = dateKeyToEpoch(dateKey(Math.max(...ends), zone), zone);
+  return { start: first, end: addDays(last, 1, zone) };
+}
+
+/** The day a view should open on.
+ *
+ *  Today, when the trip is happening now — otherwise the day the trip starts.
+ *  Deliberately *not* the first day of the span: one block accidentally left
+ *  on today's date should not decide where a fortnight of planning opens, and
+ *  it is where new blocks land, so getting it wrong compounds. ISO date keys
+ *  compare lexicographically, which is why this can be done on the strings. */
+export function openingDay(trip: Trip, zone: Zone, now = Date.now()): string {
+  const today = dateKey(now, zone);
+  const first = isDateKey(trip.startDate) ? trip.startDate : null;
+  const last = isDateKey(trip.endDate) ? trip.endDate : null;
+  if (first && last && today >= first && today <= last) return today;
+  if (first) return first;
+  const keys = tripDayKeys(trip, zone, now);
+  return keys.includes(today) ? today : keys[0] ?? today;
+}
+
+/** Every date the trip covers, as keys. What the day picker offers. */
+export function tripDayKeys(trip: Trip, zone: Zone, fallbackNow = Date.now()): string[] {
+  const { start, end } = tripSpan(trip, zone, fallbackNow);
+  return eachDay(start, end - 1, zone);
+}
+
 export interface Scale {
   start: Epoch;
   end: Epoch;

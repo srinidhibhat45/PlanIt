@@ -10,15 +10,28 @@ import {
   IconWarn, IconWeek,
 } from './Icons';
 
-export const VIEWS: { id: ViewId; label: string; Icon: (p: { size?: number }) => ReactElement }[] = [
-  { id: 'canvas', label: 'Canvas', Icon: IconCanvas },
-  { id: 'timeline', label: 'Timeline', Icon: IconTimeline },
-  { id: 'day', label: 'Day', Icon: IconDay },
-  { id: 'week', label: 'Trip', Icon: IconWeek },
-  { id: 'agenda', label: 'Agenda', Icon: IconAgenda },
-  { id: 'map', label: 'Map', Icon: IconMap },
-  { id: 'people', label: 'People', Icon: IconPeople },
-  { id: 'board', label: 'Ideas', Icon: IconBoard },
+/** The views, in tab order. `hint` is what the tab says on hover — a view
+ *  called "Trip" or "Canvas" tells you nothing on its own, and a tab strip you
+ *  have to click through to understand is a puzzle, not a UI. */
+export const VIEWS: {
+  id: ViewId; label: string; hint: string; Icon: (p: { size?: number }) => ReactElement;
+}[] = [
+  { id: 'canvas', label: 'Canvas', Icon: IconCanvas,
+    hint: 'The board — arrange cards by hand, then resolve them onto the calendar' },
+  { id: 'timeline', label: 'Timeline', Icon: IconTimeline,
+    hint: 'Everyone at once, time running left to right. Drag on an empty lane to add something' },
+  { id: 'day', label: 'Day', Icon: IconDay,
+    hint: 'One day, hour by hour, a column per person. Click an empty slot to add something' },
+  { id: 'week', label: 'Trip', Icon: IconWeek,
+    hint: 'The whole trip as a calendar month — drag a block to another day' },
+  { id: 'agenda', label: 'Agenda', Icon: IconAgenda,
+    hint: 'The plan as a readable list, day by day — the printable one' },
+  { id: 'map', label: 'Map', Icon: IconMap,
+    hint: 'Where one day happens, in order, with the journeys drawn' },
+  { id: 'people', label: 'People', Icon: IconPeople,
+    hint: 'Who is on the trip, where they are coming from, and what each of them does' },
+  { id: 'board', label: 'Ideas', Icon: IconBoard,
+    hint: 'The backlog — things somebody suggested that are not on the plan yet' },
 ];
 
 export function TopBar({
@@ -64,11 +77,12 @@ export function TopBar({
       </div>
 
       <div className="switcher" role="tablist" aria-label="View">
-        {VIEWS.map(({ id, label, Icon }) => (
+        {VIEWS.map(({ id, label, hint, Icon }) => (
           <button
             key={id}
             role="tab"
             className="switcher__btn"
+            title={`${label}\n${hint}`}
             aria-selected={view === id}
             aria-controls="view-panel"
             id={`tab-${id}`}

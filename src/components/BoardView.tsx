@@ -162,6 +162,7 @@ export function BoardView({
                     id={`sched-${idea.id}`}
                     className="input"
                     value=""
+                    title={`Put “${idea.title}” on a day — it leaves the backlog and joins the plan`}
                     onPointerDown={(e) => e.stopPropagation()}
                     onChange={(e) => { if (e.target.value) place(idea, e.target.value); }}
                   >

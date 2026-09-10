@@ -3,9 +3,9 @@ import type {
   ClockMode, Density, Filters, Frame, ID, LaneMode, Link, Person, Rect, Segment,
   Sticky, ThemeMode, Trip, ViewId,
 } from './core/types';
-import { DAY, MIN, addDays, dateKey, dateKeyToEpoch, eachDay, fmtDate } from './core/time';
+import { MIN, addDays, dateKey, dateKeyToEpoch, fmtDate } from './core/time';
 import { analyse, applyFilters, attendeesOf, issueSummary } from './core/schedule';
-import { ZOOMS, KIND_LABEL } from './core/layout';
+import { ZOOMS, KIND_LABEL, openingDay, tripDayKeys } from './core/layout';
 import { axisZone } from './core/clock';
 import { downloadIcs } from './core/ics';
 import { clearShareFromLocation, readShareFromLocation, exportJson } from './core/share';
@@ -44,7 +44,7 @@ interface Prefs {
 }
 
 const DEFAULT_PREFS: Prefs = {
-  view: 'canvas', laneMode: 'person', density: 'comfortable', theme: 'dark',
+  view: 'timeline', laneMode: 'person', density: 'comfortable', theme: 'dark',
   zoomIndex: 3, hourHeight: 62, contrast: 'normal',
 };
 
@@ -113,19 +113,18 @@ export default function App({
 
   /* ---------- day cursor ---------- */
   const zone = axisZone(clock, trip);
-  const tripDays = useMemo(() => {
-    if (!trip.segments.length) return eachDay(now, now + 6 * DAY, zone);
-    const lo = Math.min(...trip.segments.map((s) => s.start));
-    const hi = Math.max(...trip.segments.map((s) => s.end));
-    return eachDay(lo, hi, zone);
-  }, [trip.segments, zone, now]);
+  // The trip's own dates, widened by anything scheduled outside them — never
+  // "this week", which is not where the trip is. See `tripSpan`.
+  const tripDays = useMemo(() => tripDayKeys(trip, zone, now), [trip, zone, now]);
 
+  /* The day cursor opens on the trip, not on today — and it is also where the
+     Add button puts a new block, so anchoring it to today is how a plan ends
+     up with three stray blocks a fortnight before the trip. */
   const [dayKey, setDayKey] = useState<string>(() => '');
   useEffect(() => {
     if (dayKey && tripDays.includes(dayKey)) return;
-    const today = dateKey(now, zone);
-    setDayKey(tripDays.includes(today) ? today : tripDays[0] ?? today);
-  }, [tripDays, dayKey, now, zone]);
+    setDayKey(openingDay(trip, zone, now));
+  }, [trip, tripDays, dayKey, now, zone]);
 
   useEffect(() => { if (!isMobile) setRailSheet(false); }, [isMobile]);
 
@@ -234,6 +233,30 @@ export default function App({
     setSelectedId(seg.id);
     announce(`Added ${seg.title}. Details panel open.`);
   }), [guard, dayKey, zone, trip.baseTimezone, focusPersonId, announce]);
+
+  /** What a lane means when you draw a new block in it.
+   *
+   *  Both the timeline and the day grid let you draw straight onto a lane, and
+   *  the lane is the answer to "whose is this?" — a person lane assigns them, a
+   *  group lane assigns the group, a type lane sets the type, a place lane sets
+   *  the place. One lane, one meaning, in one place. */
+  const draftForLane = useCallback((laneId: string): Partial<Segment> => {
+    switch (prefs.laneMode) {
+      case 'person': return { attendeeIds: [laneId] };
+      case 'group': return { groupIds: [laneId] };
+      case 'kind': return { kind: laneId as Segment['kind'] };
+      case 'place': return { placeId: laneId, title: trip.places.find((p) => p.id === laneId)?.name };
+      default: return {};
+    }
+  }, [prefs.laneMode, trip.places]);
+
+  /** Add something to a named day — what the whole-trip grid and the agenda
+   *  need, since neither of them has an hour to point at. Ten in the morning
+   *  is a placeholder you will move; an empty day with no way in is not. */
+  const addOnDay = useCallback((key: string) => {
+    setDayKey(key);
+    addSegment({ start: dateKeyToEpoch(key, zone) + 10 * 60 * MIN });
+  }, [addSegment, zone]);
 
   const onPatch = useCallback((id: ID, patch: Partial<Segment>, label?: string) =>
     guard(() => dispatch({ type: 'segment/patch', id, patch, label })), [guard]);
@@ -538,6 +561,19 @@ export default function App({
     { combo: '[', description: 'Previous day', run: () => stepDay(-1) },
     { combo: ']', description: 'Next day', run: () => stepDay(1) },
     { combo: 'Escape', description: 'Close', run: () => { setSelectedId(null); setPaletteOpen(false); } },
+    // Removing a block was Inspector-only, which meant three clicks from a
+    // view you were already pointing at it in. The board runs its own delete
+    // (it can also delete notes, frames and connectors), so it stands aside.
+    {
+      combo: 'Backspace', description: 'Delete the selected block',
+      when: () => prefs.view !== 'canvas' && !!selectedId,
+      run: () => { if (selectedId) onDelete(selectedId); },
+    },
+    {
+      combo: 'Delete', description: 'Delete the selected block',
+      when: () => prefs.view !== 'canvas' && !!selectedId,
+      run: () => { if (selectedId) onDelete(selectedId); },
+    },
     ...VIEWS.map((v, i) => ({
       combo: String(i + 1), description: `${v.label} view`, run: () => setPref('view', v.id),
     })),
@@ -606,6 +642,7 @@ export default function App({
             onFocusPerson={setFocusPersonId}
             onSelectSegment={jumpToSegment}
             onJumpIssue={(i) => { if (i.personIds[0]) setFocusPersonId(null); if (i.segmentIds[0]) jumpToSegment(i.segmentIds[0]); }}
+            onAddPerson={() => setPersonSheet('new')}
           />
         </aside>
 
@@ -649,6 +686,10 @@ export default function App({
                 onSelect={(id) => setSelectedId(id)}
                 onMove={onMove} onResize={onResize} onReassign={onReassign}
                 onZoom={(i) => setPref('zoomIndex', i)}
+                onCreateRange={(start, end, laneId) => addSegment({
+                  start, end, timezone: zone, ...draftForLane(laneId),
+                })}
+                onAddPerson={() => setPersonSheet('new')}
               />
             )}
             {prefs.view === 'day' && dayKey && (
@@ -657,9 +698,8 @@ export default function App({
                 dayKey={dayKey} laneMode={prefs.laneMode} hourHeight={prefs.hourHeight}
                 personFilter={laneFilter}
                 onMove={onMove} onResize={onResize} onReassign={onReassign}
-                onCreateAt={(start, laneId) => addSegment({
-                  start, end: start + 60 * MIN, timezone: zone,
-                  attendeeIds: prefs.laneMode === 'person' ? [laneId] : [],
+                onCreateRange={(start, end, laneId) => addSegment({
+                  start, end, timezone: zone, ...draftForLane(laneId),
                 })}
               />
             )}
@@ -669,10 +709,15 @@ export default function App({
                 onSelect={(id) => setSelectedId(id)}
                 onShiftDays={onShiftDays}
                 onOpenDay={(k) => { setDayKey(k); setPref('view', 'day'); }}
+                onAddOnDay={addOnDay}
               />
             )}
             {prefs.view === 'agenda' && (
-              <AgendaView {...viewProps} focusPersonId={focusPersonId} onSelect={(id) => setSelectedId(id)} />
+              <AgendaView
+                {...viewProps} focusPersonId={focusPersonId}
+                onSelect={(id) => setSelectedId(id)}
+                onAddOnDay={addOnDay}
+              />
             )}
             {prefs.view === 'map' && (
               <Suspense fallback={<div className="empty"><p className="empty__body">Loading the map…</p></div>}>
@@ -734,8 +779,9 @@ export default function App({
 
       {isMobile && (
         <nav className="tabbar" role="tablist" aria-label="View">
-          {VIEWS.slice(0, 6).map(({ id, label, Icon }) => (
+          {VIEWS.slice(0, 6).map(({ id, label, hint, Icon }) => (
             <button key={id} role="tab" className="tabbar__btn" aria-selected={prefs.view === id}
+              title={`${label}\n${hint}`}
               onClick={() => setPref('view', id)}>
               <Icon size={19} />
               {label}
@@ -774,7 +820,12 @@ export default function App({
           <div className="toast" key={t.id} data-tone={t.tone} role="status">
             <span className="grow">{t.message}</span>
             {t.action && <button className="btn btn--sm" onClick={() => { t.action!.run(); dismiss(t.id); }}>{t.action.label}</button>}
-            <button className="btn btn--icon btn--sm btn--ghost" onClick={() => dismiss(t.id)} aria-label="Dismiss"><IconClose size={14} /></button>
+            <button
+              className="btn btn--icon btn--sm btn--ghost" onClick={() => dismiss(t.id)}
+              title="Dismiss this message" aria-label="Dismiss"
+            >
+              <IconClose size={14} />
+            </button>
           </div>
         ))}
       </div>
@@ -812,15 +863,34 @@ function ViewBar({
     <div className="viewbar">
       {showDayNav && (
         <>
-          <button className="btn btn--icon" onClick={() => onStepDay(-1)} aria-label="Previous day"><IconLeft /></button>
+          <button
+            className="btn btn--icon" onClick={() => onStepDay(-1)}
+            title="The day before · [" aria-label="Previous day"
+          >
+            <IconLeft />
+          </button>
           <label className="sr-only" htmlFor="daypick">Day</label>
-          <select id="daypick" className="input" style={{ width: 'auto' }} value={dayKey} onChange={(e) => onDay(e.target.value)}>
+          <select
+            id="daypick" className="input" style={{ width: 'auto' }} value={dayKey}
+            title="Which day this view is showing — also the day new blocks land on"
+            onChange={(e) => onDay(e.target.value)}
+          >
             {tripDays.map((d) => (
               <option key={d} value={d}>{fmtDate(dateKeyToEpoch(d, zone), zone, 'long')}</option>
             ))}
           </select>
-          <button className="btn btn--icon" onClick={() => onStepDay(1)} aria-label="Next day"><IconRight /></button>
-          <button className="btn btn--sm" onClick={onToday}><IconTarget size={14} /> Today</button>
+          <button
+            className="btn btn--icon" onClick={() => onStepDay(1)}
+            title="The day after · ]" aria-label="Next day"
+          >
+            <IconRight />
+          </button>
+          <button
+            className="btn btn--sm" onClick={onToday}
+            title="Jump to today, if today is inside the trip"
+          >
+            <IconTarget size={14} /> Today
+          </button>
         </>
       )}
 
@@ -828,6 +898,7 @@ function ViewBar({
       <select
         id="whopick" className="input" style={{ width: 'auto' }}
         value={focusPersonId ?? ''}
+        title="Walk in one person's shoes — every view narrows to what they actually do"
         onChange={(e) => onFocusPerson(e.target.value ? (e.target.value as ID) : null)}
       >
         <option value="">Everyone</option>
@@ -837,8 +908,11 @@ function ViewBar({
       {showLanes && (
         <>
           <label className="sr-only" htmlFor="lanepick">Group lanes by</label>
-          <select id="lanepick" className="input" style={{ width: 'auto' }} value={laneMode}
-            onChange={(e) => onLaneMode(e.target.value as LaneMode)}>
+          <select
+            id="lanepick" className="input" style={{ width: 'auto' }} value={laneMode}
+            title="What each row stands for. It also decides what a block you draw belongs to"
+            onChange={(e) => onLaneMode(e.target.value as LaneMode)}
+          >
             <option value="person">Lane per person</option>
             <option value="group">Lane per group</option>
             <option value="place">Lane per place</option>
@@ -850,28 +924,59 @@ function ViewBar({
 
       {view === 'timeline' && (
         <div className="row" style={{ gap: 2 }}>
-          <button className="btn btn--icon" onClick={() => onZoom(Math.max(0, zoomIndex - 1))}
-            disabled={zoomIndex === 0} aria-label="Zoom out"><IconZoomOut /></button>
-          <span className="mono" style={{ fontSize: 'var(--step--2)', color: 'var(--ink-3)', width: '3.4rem', textAlign: 'center' }}>
+          <button
+            className="btn btn--icon" onClick={() => onZoom(Math.max(0, zoomIndex - 1))}
+            disabled={zoomIndex === 0}
+            title="Show more days at once · ⌘ + scroll" aria-label="Zoom out"
+          >
+            <IconZoomOut />
+          </button>
+          <span
+            className="mono" title="How much timeline one hour gets"
+            style={{ fontSize: 'var(--step--2)', color: 'var(--ink-3)', width: '3.4rem', textAlign: 'center' }}
+          >
             {ZOOMS[zoomIndex]}px/h
           </span>
-          <button className="btn btn--icon" onClick={() => onZoom(Math.min(ZOOMS.length - 1, zoomIndex + 1))}
-            disabled={zoomIndex === ZOOMS.length - 1} aria-label="Zoom in"><IconZoomIn /></button>
-          <button className="btn btn--sm" onClick={onFit}>Fit trip</button>
+          <button
+            className="btn btn--icon" onClick={() => onZoom(Math.min(ZOOMS.length - 1, zoomIndex + 1))}
+            disabled={zoomIndex === ZOOMS.length - 1}
+            title="Show fewer days, in more detail · ⌘ + scroll" aria-label="Zoom in"
+          >
+            <IconZoomIn />
+          </button>
+          <button
+            className="btn btn--sm" onClick={onFit}
+            title="Pick the zoom that fits the whole trip on screen"
+          >
+            Fit trip
+          </button>
         </div>
       )}
 
       {view === 'day' && (
         <div className="row" style={{ gap: 2 }}>
-          <button className="btn btn--icon" onClick={() => onHourHeight(Math.max(34, hourHeight - 14))} aria-label="Shorter hours"><IconZoomOut /></button>
-          <button className="btn btn--icon" onClick={() => onHourHeight(Math.min(140, hourHeight + 14))} aria-label="Taller hours"><IconZoomIn /></button>
+          <button
+            className="btn btn--icon" onClick={() => onHourHeight(Math.max(34, hourHeight - 14))}
+            title="Squeeze the hours — more of the day on screen" aria-label="Shorter hours"
+          >
+            <IconZoomOut />
+          </button>
+          <button
+            className="btn btn--icon" onClick={() => onHourHeight(Math.min(140, hourHeight + 14))}
+            title="Stretch the hours — more room inside each block" aria-label="Taller hours"
+          >
+            <IconZoomIn />
+          </button>
         </div>
       )}
 
       <div className="grow" />
 
       {person && (
-        <button className="chip chip--accent" onClick={onClearFocus}>
+        <button
+          className="chip chip--accent" onClick={onClearFocus}
+          title={`Stop showing only ${person.name} and go back to everybody`}
+        >
           Only {person.name} · clear
         </button>
       )}
@@ -889,7 +994,13 @@ function ViewBar({
         </button>
       )}
 
-      <button className="btn btn--primary btn--sm" onClick={onAdd}>
+      <button
+        className="btn btn--primary btn--sm" onClick={onAdd}
+        title={
+          (dayKey ? `Add a block on ${fmtDate(dateKeyToEpoch(dayKey, zone), zone, 'medium')}` : 'Add a block')
+          + ' · N\nOr draw one straight onto the timeline'
+        }
+      >
         <IconPlus size={14} /> Add
       </button>
     </div>

@@ -13,6 +13,7 @@ const GROUPS: { title: string; rows: [string, string][] }[] = [
       ['/', 'Search the itinerary'],
       ['[ / ]', 'Previous / next day'],
       ['\\', 'Show or hide the filters rail'],
+      ['⌫ / Del', 'Delete the selected block'],
       ['Esc', 'Close whatever is open'],
     ],
   },
@@ -36,6 +37,8 @@ const GROUPS: { title: string; rows: [string, string][] }[] = [
   {
     title: 'Timeline and day grid',
     rows: [
+      ['Drag empty lane', 'Draw a new block where it goes — across on the timeline, down in the day grid'],
+      ['Click empty lane', 'The same, one hour long'],
       ['Tab', 'Enter the grid'],
       ['← → ↑ ↓', 'Move between blocks'],
       ['Space', 'Pick a block up'],

@@ -1,7 +1,7 @@
 /** One day, hours down the side, a column per person or group.
  *  The view people reach for when they ask "where do I need to be, and when?" */
 
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ClockMode, ID, Issue, LaneMode, Segment, Trip } from '../core/types';
 import { HOUR, MIN, dateKeyToEpoch, fmtRange, fmtTime, snap } from '../core/time';
 import { buildLanes, clipToDay, makeVScale, packColumns, segmentsOnDay, snapStepFor } from '../core/layout';
@@ -11,9 +11,14 @@ import { SegmentChrome, describeSegment } from './SegmentChrome';
 
 const HEAD_H = 52;
 
+/** Quarter-hours: fine enough to draw a real block, coarse enough to land on
+ *  a time somebody would write down. Zone-aware, so a +5:45 zone still snaps
+ *  to its own quarter-hours rather than to UTC's. */
+const DRAW_SNAP_MIN = 15;
+
 export function DayView({
   trip, segments, dayKey, laneMode, clock, issues, selectedId, now, personFilter,
-  hourHeight, onSelect, onMove, onResize, onReassign, onAnnounce, onCreateAt,
+  hourHeight, onSelect, onMove, onResize, onReassign, onAnnounce, onCreateRange,
 }: {
   trip: Trip; segments: Segment[]; dayKey: string; laneMode: LaneMode; clock: ClockMode;
   issues: Issue[]; selectedId: ID | null; now: number; personFilter: ID[];
@@ -23,13 +28,56 @@ export function DayView({
   onResize: (id: ID, edge: 'start' | 'end', deltaMs: number, snapMin: number) => void;
   onReassign: (id: ID, fromLane: string, toLane: string) => void;
   onAnnounce: (t: string) => void;
-  onCreateAt: (start: number, laneId: string) => void;
+  /** Drag down an empty column to add something there — the same gesture the
+   *  timeline uses, so the two views do not have to be learned separately. */
+  onCreateRange: (start: number, end: number, laneId: string) => void;
 }) {
   const zone = axisZone(clock, trip);
   const dayStart = useMemo(() => dateKeyToEpoch(dayKey, zone), [dayKey, zone]);
   const vscale = useMemo(() => makeVScale(dayStart, hourHeight), [dayStart, hourHeight]);
   const snapMin = snapStepFor(hourHeight * 2);
   const colRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  /* Drawing a new block, exactly as on the timeline but down instead of
+     across. It replaces a double-click, which nothing in the UI could tell
+     you about — the view hint had been claiming a single click worked. */
+  const [draft, setDraft] = useState<{ lane: number; from: number; to: number } | null>(null);
+  const draftRef = useRef<typeof draft>(null);
+  draftRef.current = draft;
+
+  const startDraft = (e: React.PointerEvent, laneIndex: number, laneId: string) => {
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest('.seg')) return;
+
+    const body = e.currentTarget as HTMLElement;
+    const top = body.getBoundingClientRect().top;
+    const at = (clientY: number) => snap(vscale.t(clientY - top), DRAW_SNAP_MIN, zone);
+    body.setPointerCapture(e.pointerId);
+    setDraft({ lane: laneIndex, from: at(e.clientY), to: at(e.clientY) });
+
+    const move = (ev: PointerEvent) => setDraft((d) => (d ? { ...d, to: at(ev.clientY) } : d));
+    const finish = () => {
+      const d = draftRef.current;
+      cleanup();
+      setDraft(null);
+      if (!d) return;
+      const from = Math.min(d.from, d.to);
+      const to = Math.max(d.from, d.to);
+      onCreateRange(from, from + (to - from < 15 * MIN ? 60 * MIN : to - from), laneId);
+    };
+    const abort = (ev: KeyboardEvent) => { if (ev.key === 'Escape') { cleanup(); setDraft(null); } };
+    const cleanup = () => {
+      body.releasePointerCapture?.(e.pointerId);
+      body.removeEventListener('pointermove', move);
+      body.removeEventListener('pointerup', finish);
+      body.removeEventListener('pointercancel', finish);
+      window.removeEventListener('keydown', abort);
+    };
+    body.addEventListener('pointermove', move);
+    body.addEventListener('pointerup', finish);
+    body.addEventListener('pointercancel', finish);
+    window.addEventListener('keydown', abort);
+  };
 
   const todays = useMemo(() => segmentsOnDay(segments, dayKey, zone), [segments, dayKey, zone]);
   const lanes = useMemo(() => {
@@ -150,12 +198,19 @@ export function DayView({
                 className="dg__body"
                 style={{ height: vscale.height }}
                 data-droppable={drag.state?.laneIndex === li && drag.state.originLane !== li ? 'over' : undefined}
-                onDoubleClick={(e) => {
-                  const r = e.currentTarget.getBoundingClientRect();
-                  const t = vscale.t(e.clientY - r.top);
-                  onCreateAt(Math.round(t / (30 * MIN)) * (30 * MIN), lane.id);
-                }}
+                title={`Drag down an empty stretch to add something to ${lane.label}`}
+                onPointerDown={(e) => startDraft(e, li, lane.id)}
               >
+                {draft && draft.lane === li && (() => {
+                  const from = Math.min(draft.from, draft.to);
+                  const to = Math.max(draft.from, draft.to);
+                  const y = vscale.y(from);
+                  return (
+                    <div className="dg__draft" style={{ top: y, height: Math.max(3, vscale.y(to) - y) }}>
+                      <span className="dg__draftlabel mono">{fmtRange(from, to, { zone })}</span>
+                    </div>
+                  );
+                })()}
                 {lane.segments.map((seg) => {
                   const p = preview(seg);
                   const clip = clipToDay({ ...seg, start: p.start, end: p.end }, dayStart);

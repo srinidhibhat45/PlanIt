@@ -62,6 +62,7 @@ export function ClockMenu({ trip, clock, onClock }: {
         aria-haspopup="true"
         aria-expanded={open}
         aria-controls={id}
+        title={'Which clock every time in the app is written in\nRight now: ' + clockLabel(clock, trip)}
         onClick={() => setOpen((o) => !o)}
       >
         <IconGlobe size={15} />
@@ -83,6 +84,7 @@ export function ClockMenu({ trip, clock, onClock }: {
               role="menuitemradio"
               aria-checked={currentKey === o.key}
               className="clockmenu__item"
+              title={`${o.label} — ${o.sub}`}
               onClick={() => { onClock(o.value); setOpen(false); }}
             >
               <span className="clockmenu__check" aria-hidden="true">{currentKey === o.key ? '●' : ''}</span>

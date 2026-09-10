@@ -14,11 +14,11 @@ const HINTS: Record<ViewId, { lead: string; rest: string }> = {
   },
   timeline: {
     lead: 'Everyone at once.',
-    rest: 'One lane per person, time running left to right. Drag a block to move it, drag its edges to resize, drag it into another lane to reassign it.',
+    rest: 'One lane per person, time running left to right. Drag across an empty stretch of lane to add something there; drag a block to move it, drag its edges to resize, drag it into another lane to reassign it.',
   },
   day: {
     lead: 'One day, hour by hour.',
-    rest: 'A column per person. Click an empty slot to add something there.',
+    rest: 'A column per person. Drag down an empty stretch of a column to add something there — or click it for an hour.',
   },
   week: {
     lead: 'The whole trip at arm’s length.',

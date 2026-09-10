@@ -213,6 +213,7 @@ export function Inspector({
             Estimated offline; the map upgrades this to a real road route when it can reach the router.
           </p>
           <button className="btn btn--sm" type="button"
+            title="Set this block's length to the modelled journey time, traffic and airport overheads included"
             onClick={() => {
               const need = travelMinutes(est) + overheadMinutes(mode, fromPlace?.kind, toPlace?.kind);
               onPatch(seg.id, { end: seg.start + need * MIN }, 'Fitted to travel time');
@@ -277,19 +278,30 @@ export function Inspector({
 
       <div className="row" style={{ flexWrap: 'wrap' }}>
         <button type="button" className="btn btn--sm" aria-pressed={!!seg.locked}
+          title="A locked block is never moved by auto-arrange, and warns before you drag it"
           onClick={() => onPatch(seg.id, { locked: !seg.locked }, seg.locked ? 'Unlocked' : 'Locked')}>
           <IconLock size={14} /> {seg.locked ? 'Locked' : 'Lock'}
         </button>
-        <button type="button" className="btn btn--sm" onClick={() => onDuplicate(seg.id)}>
+        <button
+          type="button" className="btn btn--sm" onClick={() => onDuplicate(seg.id)}
+          title="Make a copy of this block, offset slightly so you can see both"
+        >
           <IconCopy size={14} /> Duplicate
         </button>
-        <a className="btn btn--sm" href={googleCalendarUrl(seg, trip)} target="_blank" rel="noreferrer noopener">
+        <a
+          className="btn btn--sm" href={googleCalendarUrl(seg, trip)} target="_blank" rel="noreferrer noopener"
+          title="Open this one block in Google Calendar, in a new tab"
+        >
           <IconLink size={14} /> Google
         </a>
-        <a className="btn btn--sm" href={outlookUrl(seg, trip)} target="_blank" rel="noreferrer noopener">
+        <a
+          className="btn btn--sm" href={outlookUrl(seg, trip)} target="_blank" rel="noreferrer noopener"
+          title="Open this one block in Outlook, in a new tab"
+        >
           <IconLink size={14} /> Outlook
         </a>
         <button type="button" className="btn btn--sm btn--danger" style={{ marginLeft: 'auto' }}
+          title={'Remove this block from the trip · \u232B\nUndoable'}
           onClick={() => { onDelete(seg.id); onClose(); }}>
           <IconTrash size={14} /> Delete
         </button>

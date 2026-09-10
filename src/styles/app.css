@@ -137,6 +137,13 @@
 .rail-section__chev { transition: transform var(--dur-2) var(--ease-out); }
 .rail-section__head[aria-expanded='false'] .rail-section__chev { transform: rotate(-90deg); }
 
+/* The one obvious way to add a traveller, where the travellers are. */
+.rail__add {
+  width: 100%; justify-content: center;
+  margin-top: var(--s-2);
+  border-style: dashed;
+}
+
 .person-row {
   display: flex; align-items: center; gap: var(--s-2);
   width: 100%;

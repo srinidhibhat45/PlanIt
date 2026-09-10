@@ -7,18 +7,20 @@ import { issueSummary } from '../core/schedule';
 import { branchStats } from '../core/branch';
 import { zoneAbbr, zoneCity } from '../core/time';
 import { initials } from './SegmentChrome';
-import { IconChevron, IconSearch } from './Icons';
+import { IconChevron, IconPlus, IconSearch } from './Icons';
 
 const ALL_KINDS: SegmentKind[] = ['flight', 'transfer', 'checkin', 'checkout', 'session', 'workshop', 'meal', 'activity', 'free', 'rest', 'buffer', 'note'];
 
 export function Rail({
-  trip, filters, issues, focusPersonId, onFilters, onFocusPerson, onSelectSegment, onJumpIssue,
+  trip, filters, issues, focusPersonId,
+  onFilters, onFocusPerson, onSelectSegment, onJumpIssue, onAddPerson,
 }: {
   trip: Trip; filters: Filters; issues: Issue[]; focusPersonId: ID | null;
   onFilters: (f: Partial<Filters>) => void;
   onFocusPerson: (id: ID | null) => void;
   onSelectSegment: (id: ID) => void;
   onJumpIssue: (i: Issue) => void;
+  onAddPerson: () => void;
 }) {
   const summary = issueSummary(issues);
   const tags = [...new Set(trip.segments.flatMap((s) => s.tags))].sort();
@@ -50,6 +52,7 @@ export function Rail({
                   type="button"
                   className="person-row"
                   style={{ ['--c' as string]: p.color }}
+                  title={`${on ? 'Stop showing' : 'Show'} only ${p.name}'s blocks · ${p.homeCity}`}
                   aria-pressed={on}
                   onClick={() => onFilters({
                     personIds: on ? filters.personIds.filter((x) => x !== p.id) : [...filters.personIds, p.id],
@@ -67,14 +70,26 @@ export function Rail({
             );
           })}
         </ul>
+        <button
+          className="btn btn--sm rail__add" onClick={onAddPerson}
+          title="Add someone to the trip — their home city and dates, so the plan can be checked against them"
+        >
+          <IconPlus size={13} /> Add someone
+        </button>
         <div className="row" style={{ marginTop: 'var(--s-2)' }}>
-          <button className="btn btn--sm btn--ghost" onClick={() => onFilters({ personIds: [] })}
-            disabled={filters.personIds.length === 0}>
+          <button
+            className="btn btn--sm btn--ghost" onClick={() => onFilters({ personIds: [] })}
+            disabled={filters.personIds.length === 0}
+            title="Stop filtering by person — show everybody's blocks again"
+          >
             Clear
           </button>
-          <button className="btn btn--sm btn--ghost"
+          <button
+            className="btn btn--sm btn--ghost"
             aria-pressed={!!focusPersonId}
-            onClick={() => onFocusPerson(focusPersonId ? null : (filters.personIds[0] ?? trip.people[0]?.id ?? null))}>
+            title="Show one person's trip only, as they would see it"
+            onClick={() => onFocusPerson(focusPersonId ? null : (filters.personIds[0] ?? trip.people[0]?.id ?? null))}
+          >
             {focusPersonId ? `Solo: ${trip.people.find((p) => p.id === focusPersonId)?.name.split(' ')[0]}` : 'Solo view'}
           </button>
         </div>
@@ -88,6 +103,7 @@ export function Rail({
               <li key={g.id}>
                 <button
                   type="button" className="person-row" style={{ ['--c' as string]: g.color }} aria-pressed={on}
+                  title={`${on ? 'Stop showing' : 'Show'} only what ${g.name} does`}
                   onClick={() => onFilters({
                     groupIds: on ? filters.groupIds.filter((x) => x !== g.id) : [...filters.groupIds, g.id],
                   })}
@@ -119,6 +135,7 @@ export function Rail({
                 <li key={b.id}>
                   <button
                     type="button" className="person-row" style={{ ['--c' as string]: b.color }} aria-pressed={on}
+                    title={`${on ? 'Stop showing' : 'Show'} only the “${b.name}” sub-trip`}
                     onClick={() => onFilters({
                       branchIds: on
                         ? filters.branchIds.filter((x) => x !== b.id)
@@ -150,6 +167,7 @@ export function Rail({
               <button
                 key={k} type="button" className="chip" aria-pressed={on}
                 data-kind={k}
+                title={`${on ? 'Stop showing' : 'Show'} only ${KIND_LABEL[k].toLowerCase()} blocks — ${n} of them`}
                 style={on ? { background: 'var(--c)', color: 'var(--ink-invert)', borderColor: 'var(--c)' } : undefined}
                 onClick={() => onFilters({ kinds: on ? filters.kinds.filter((x) => x !== k) : [...filters.kinds, k] })}
               >
@@ -167,6 +185,7 @@ export function Rail({
               const on = filters.tags.includes(t);
               return (
                 <button key={t} type="button" className="chip" aria-pressed={on}
+                  title={`${on ? 'Stop showing' : 'Show'} only blocks tagged #${t}`}
                   style={on ? { background: 'var(--brand-soft)', borderColor: 'var(--brand-line)', color: 'var(--brand-ink)' } : undefined}
                   onClick={() => onFilters({ tags: on ? filters.tags.filter((x) => x !== t) : [...filters.tags, t] })}>
                   #{t}
@@ -199,6 +218,7 @@ export function Rail({
                 <li key={i.id}>
                   <button
                     type="button" className="issue" data-sev={i.severity}
+                    title={`${i.detail}\n\nClick to jump to it`}
                     onClick={() => { onJumpIssue(i); if (i.segmentIds[0]) onSelectSegment(i.segmentIds[0]); }}
                   >
                     <span className="issue__dot" aria-hidden="true" />
@@ -235,6 +255,7 @@ function Section({
     <section className="rail-section">
       <button
         type="button" className="rail-section__head" aria-expanded={open} aria-controls={id}
+        title={`${open ? 'Collapse' : 'Expand'} ${title.toLowerCase()}`}
         onClick={() => setOpen((o) => !o)}
       >
         <span className="eyebrow">{title}</span>
