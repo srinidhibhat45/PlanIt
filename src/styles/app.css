@@ -239,6 +239,14 @@
 }
 .viewbar::-webkit-scrollbar { display: none; }
 .viewbar__title { font-size: var(--step-1); font-weight: 650; letter-spacing: var(--tracking-tight); }
+/* Add, and the selection's own actions, stay put while the rest of the bar
+   scrolls under them — they are the two things every view must offer. */
+.viewbar__end {
+  position: sticky; right: 0; z-index: 2; flex: none;
+  display: flex; align-items: center; gap: var(--s-2);
+  padding-left: var(--s-3);
+  background: linear-gradient(90deg, transparent, var(--bg-1) var(--s-3));
+}
 .viewbar__sub { font-size: var(--step--2); color: var(--ink-3); }
 
 .view-body { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; }
@@ -453,3 +461,63 @@ dialog.modal.tour { width: min(34rem, calc(100vw - 2rem)); }
   .hint { padding: var(--s-2) var(--s-3); }
   .hint__long { display: none; }
 }
+
+/* ================= tooltips ================= */
+
+/* The native `title` is not a tooltip: it is slow, unstyled, invisible to the
+   keyboard and absent on touch. `Tip` replaces it everywhere a control is an
+   icon or a word that does not carry its own explanation. */
+.tip {
+  position: fixed;
+  z-index: 120;
+  max-width: 20rem;
+  display: grid;
+  gap: 3px;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  background: var(--bg-2);
+  box-shadow: var(--shadow-3);
+  color: var(--ink-2);
+  font-size: var(--step--2);
+  line-height: 1.45;
+  pointer-events: none;
+  animation: tip-in var(--dur-1) var(--ease-out) both;
+}
+.tip__head { display: flex; align-items: baseline; gap: var(--s-2); }
+.tip__label { color: var(--ink-1); font-weight: 650; letter-spacing: var(--tracking-tight); }
+.tip__keys {
+  margin-left: auto; flex: none;
+  padding: 1px 5px;
+  border: 1px solid var(--line-2); border-radius: var(--r-1);
+  background: var(--bg-3);
+  font-family: var(--font-mono); font-size: var(--step--2); color: var(--ink-2);
+  white-space: nowrap;
+}
+.tip__hint { color: var(--ink-3); text-wrap: pretty; }
+
+@keyframes tip-in {
+  from { opacity: 0; transform: translateY(2px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+.tip[data-side='top'] { animation-name: tip-in-up; }
+@keyframes tip-in-up {
+  from { opacity: 0; transform: translateY(-2px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) { .tip { animation: none; } }
+
+/* The selection's own actions, in the view bar. Same place in every view, so
+   "how do I get rid of this" has one answer wherever you are standing. */
+.viewbar__sel {
+  display: flex; align-items: center; gap: 2px; flex: none;
+  padding: 2px 2px 2px var(--s-3);
+  border: 1px solid var(--line-2); border-radius: var(--r-full);
+  background: var(--bg-2);
+}
+.viewbar__selname {
+  max-width: 9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--step--2); color: var(--ink-2);
+}
+.viewbar__del:hover { color: var(--danger-ink); background: var(--danger-soft); }
+@media (max-width: 48rem) { .viewbar__selname { display: none; } .viewbar__sel { padding-left: 2px; } }

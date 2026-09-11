@@ -190,8 +190,13 @@ function applyToTrip(trip: Trip, a: Action): Trip {
     case 'segment/duplicate': {
       const src = trip.segments.find((s) => s.id === a.id);
       if (!src) return trip;
+      // A copy laid exactly on top of its original is a clash the analyser has
+      // to report and the planner has to clear up, so the copy starts where
+      // the original ends — the slot you almost certainly wanted.
+      const span = src.end - src.start;
       const copy: Segment = {
         ...src, id: uid('seg'), title: `${src.title} (copy)`,
+        start: src.end, end: src.end + span,
         at: src.at ? { x: src.at.x + 28, y: src.at.y + 28 } : undefined,
       };
       return { ...trip, segments: [...trip.segments, copy] };

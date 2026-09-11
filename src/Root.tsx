@@ -10,7 +10,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ID, Trip } from './core/types';
 import {
   activeTripId, deleteTrip, duplicateTrip, importLegacyTrip, listTrips, migrate,
-  readTrip, reidentify, setActiveTrip, writeTrip, type TripMeta,
+  readTrip, reidentify, setActiveTrip, storageWorks, writeTrip, type TripMeta,
 } from './core/library';
 import { conferenceTrip } from './data/conference';
 import { TripsView } from './components/TripsView';
@@ -70,6 +70,19 @@ export default function Root() {
 
   const openTrip = useCallback((id: ID) => { setActiveTrip(id); go(`#/t/${id}`); }, []);
 
+  /** A plan that arrived in a link becomes a trip of this browser's own:
+   *  written to the library under fresh ids, made active, and opened at its
+   *  own address so a reload lands back on it. */
+  const adopt = useCallback((trip: Trip) => {
+    const owned = adoptSharedTrip(trip);
+    refresh();
+    go(`#/t/${owned.id}`);
+    if (!storageWorks()) {
+      setNotice('This browser is not letting the page store anything — a private window, or site data blocked. '
+        + 'The copy is open, but it will not be here after a reload. Export a JSON backup from Share.');
+    }
+  }, [refresh]);
+
   const create = useCallback((trip: Trip) => {
     writeTrip(trip);
     refresh();
@@ -105,7 +118,7 @@ export default function Root() {
   }, [route]);
 
   if (route.kind === 'share') {
-    return <App tripId={null} initialTrip={null} onExit={() => go('#/')} onSaved={refresh} />;
+    return <App tripId={null} initialTrip={null} onExit={() => go('#/')} onSaved={refresh} onAdopt={adopt} />;
   }
 
   if (route.kind === 'trip') {
@@ -133,6 +146,7 @@ export default function Root() {
         initialTrip={initial}
         onExit={() => { setActiveTrip(null); go('#/'); }}
         onSaved={refresh}
+        onAdopt={adopt}
       />
     );
   }

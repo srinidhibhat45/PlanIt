@@ -393,6 +393,24 @@
 .agenda__daymeta { font-size: var(--step--1); color: var(--ink-3); }
 
 .agenda__list { display: grid; gap: 2px; }
+/* The row is the item plus its own remove button: removing a line should not
+   mean opening a panel to find the same command. */
+.agenda__row { position: relative; display: flex; align-items: stretch; }
+.agenda__row > .agenda__item { flex: 1 1 auto; min-width: 0; }
+.agenda__del {
+  flex: none;
+  display: grid; place-items: center;
+  width: 2.2rem; margin-left: 2px;
+  border: 1px solid transparent; border-radius: var(--r-2);
+  background: transparent; color: var(--ink-3); cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out),
+    background-color var(--dur-1) var(--ease-out);
+}
+.agenda__row:hover .agenda__del,
+.agenda__del:focus-visible { opacity: 1; }
+.agenda__del:hover { color: var(--danger-ink); background: var(--danger-soft); }
+@media (hover: none) { .agenda__del { opacity: 1; } }
 .agenda__item {
   display: grid;
   grid-template-columns: 5.6rem minmax(0, 1fr) auto;
@@ -502,6 +520,50 @@
   display: grid; gap: var(--s-1);
   font-size: var(--step--2);
 }
+.map-overlay--middle {
+  left: 50%; top: 50%; right: auto; transform: translate(-50%, -50%);
+  justify-items: stretch;
+}
+
+/* The stops, in the order they happen — the map's own editable list. */
+.map-stops {
+  display: grid; gap: 1px;
+  margin: var(--s-2) 0 var(--s-1);
+  padding: 0; list-style: none;
+  max-height: 15rem; overflow: auto;
+  overscroll-behavior: contain;
+}
+.map-stop { display: flex; align-items: center; gap: 2px; border-radius: var(--r-1); }
+.map-stop[data-active='true'] { background: var(--bg-3); }
+.map-stop__go {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; align-items: center; gap: var(--s-2);
+  padding: 3px var(--s-2);
+  border: 0; border-radius: var(--r-1);
+  background: transparent; color: var(--ink-2); cursor: pointer;
+  font-size: var(--step--2); text-align: left;
+}
+.map-stop__go:hover { background: var(--bg-3); color: var(--ink-1); }
+.map-stop__n {
+  flex: none; display: grid; place-items: center;
+  width: 1.15rem; height: 1.15rem; border-radius: var(--r-full);
+  background: var(--bg-4); color: var(--ink-2);
+  font-family: var(--font-mono); font-size: 0.62rem;
+}
+.map-stop__name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.map-stop__t { flex: none; color: var(--ink-3); }
+.map-stop__del {
+  flex: none; display: grid; place-items: center;
+  width: 1.5rem; height: 1.5rem; padding: 0;
+  border: 0; border-radius: var(--r-1);
+  background: transparent; color: var(--ink-3); cursor: pointer;
+  opacity: 0; transition: opacity var(--dur-1) var(--ease-out);
+}
+.map-stop:hover .map-stop__del,
+.map-stop__del:focus-visible { opacity: 1; }
+.map-stop__del:hover { color: var(--danger-ink); background: var(--danger-soft); }
+@media (hover: none) { .map-stop__del { opacity: 1; } }
+
 @media (max-width: 60rem) { .map-legend { display: none; } }
 
 /* ============================================================
@@ -627,13 +689,13 @@
 
 @media print {
   @page { margin: 14mm 12mm; }
-  body::before, .topbar, .rail, .inspector, .tabbar, .viewbar, .toasts, .scrim { display: none !important; }
+  body::before, .topbar, .rail, .inspector, .tabbar, .viewbar, .toasts, .scrim, .tip { display: none !important; }
   .app, .shell, .main, .view-body { display: block !important; height: auto !important; overflow: visible !important; }
   body { background: #fff; color: #000; }
   .agenda { max-width: none; padding: 0; }
   .agenda__day { break-inside: avoid; page-break-inside: avoid; }
   .agenda__dayhead { position: static; background: none; border-bottom: 2px solid #000; }
-  .agenda__add, .wk__add { display: none !important; }
+  .agenda__add, .wk__add, .agenda__del, .lane__add { display: none !important; }
   .agenda__item { border: 0; border-bottom: 1px solid #ccc; border-radius: 0; padding: 6pt 0; }
   .agenda__title::before { box-shadow: none; border: 1px solid #000; }
   .print-only { display: block !important; }
@@ -660,3 +722,27 @@
   .tl__lanehead { padding: var(--s-2); gap: var(--s-1); }
   .tl__corner { padding: var(--s-2); }
 }
+
+/* ================= the "+" on a lane, column or day ================= */
+
+/* Every lane can be added to directly. It stays quiet until the lane is
+   hovered or the button itself is focused, so a screen of lanes does not
+   become a screen of plus signs — but it is always reachable by keyboard. */
+.lane__add {
+  flex: none;
+  display: grid; place-items: center;
+  width: 22px; height: 22px; padding: 0;
+  border: 1px dashed var(--line-3); border-radius: var(--r-1);
+  background: transparent; color: var(--ink-3);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out), background-color var(--dur-1) var(--ease-out);
+}
+.tl__lane:hover .lane__add,
+.dg__col:hover .lane__add,
+.lane__add:focus-visible { opacity: 1; }
+.lane__add:hover { color: var(--ink-1); border-color: var(--brand-line); background: var(--brand-soft); }
+
+/* Touch has no hover to reveal it, so there it simply stays. */
+@media (hover: none) { .lane__add { opacity: 1; } }

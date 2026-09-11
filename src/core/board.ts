@@ -50,7 +50,10 @@ export function clampZoom(z: number): number {
 /** A viewport that fits `rect` inside a viewport of this size, with margin. */
 export function fitTo(rect: Rect, width: number, height: number, margin = 72): Viewport {
   if (rect.w <= 0 || rect.h <= 0) return DEFAULT_VIEWPORT;
+  // Never magnify: fitting is about bringing everything into view, and a board
+  // holding one card would otherwise open at 300%, which reads as a bug.
   const zoom = clampZoom(Math.min(
+    1,
     (width - margin * 2) / rect.w,
     (height - margin * 2) / rect.h,
   ));

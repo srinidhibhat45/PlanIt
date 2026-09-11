@@ -25,7 +25,9 @@ import {
   compactDuration, describeGap, gapTone, setDuration, setTimeOfDay, shiftBy, stackGaps,
   summariseDay,
 } from '../src/core/timelayer';
-import { makeBranch, migrate, reidentify } from '../src/core/library';
+import {
+  deleteTrip, listTrips, makeBranch, migrate, readTrip, reidentify, storageWorks, writeTrip,
+} from '../src/core/library';
 import { dateKeyToEpoch } from '../src/core/time';
 import type { Trip } from '../src/core/types';
 
@@ -968,6 +970,73 @@ ok('branch membership is rewritten',
 
 const bare = migrate({ ...trip, branches: undefined as unknown as Trip['branches'] });
 eq('a trip written before sub-trips existed still loads', bare.branches.length, 0);
+
+/* ============ the library survives an update ============ */
+
+/* A hosted app updates under people's feet, so the thing that must never
+   happen is a new build quietly deciding the library is empty. These run
+   against a stub of the real API, with no browser in sight. */
+
+class FakeStorage {
+  private map = new Map<string, string>();
+  /** Set to fail every write, the way a full quota or a private window does. */
+  full = false;
+  get length() { return this.map.size; }
+  key(i: number) { return [...this.map.keys()][i] ?? null; }
+  getItem(k: string) { return this.map.get(k) ?? null; }
+  setItem(k: string, v: string) {
+    if (this.full) { const e = new Error('quota'); e.name = 'QuotaExceededError'; throw e; }
+    this.map.set(k, String(v));
+  }
+  removeItem(k: string) { this.map.delete(k); }
+  clear() { this.map.clear(); }
+}
+
+const store = new FakeStorage();
+(globalThis as { localStorage?: unknown }).localStorage = store;
+
+const libTrip = reidentify(conferenceTrip());
+eq('a trip saves cleanly', writeTrip(libTrip), 'ok');
+eq('and is listed once', listTrips().filter((t) => t.id === libTrip.id).length, 1);
+ok('and reads back whole', (readTrip(libTrip.id)?.segments.length ?? 0) === libTrip.segments.length);
+ok('storage reports itself working', storageWorks());
+
+// The index is a cache. Losing it must not lose the trips.
+store.removeItem('planit.library.v2');
+eq('a lost index is rebuilt from the trips themselves',
+   listTrips().filter((t) => t.id === libTrip.id).length, 1);
+ok('and the rebuilt index is written back, not recomputed forever',
+   store.getItem('planit.library.v2')?.includes(libTrip.id) === true);
+
+// A half-written or future-versioned index is treated the same way.
+store.setItem('planit.library.v2', '{"version":9,"trips":');
+eq('a corrupt index does not lose a trip either',
+   listTrips().filter((t) => t.id === libTrip.id).length, 1);
+
+// A trip written by a build that used a different key still gets found.
+const older = reidentify(conferenceTrip());
+store.setItem(`planit.trip.v1.${older.id}`, JSON.stringify(older));
+const listed = listTrips();
+ok('a trip under an older key name is adopted', listed.some((t) => t.id === older.id));
+ok('and re-homed under the current one', store.getItem(`planit.trip.v2.${older.id}`) !== null);
+ok('with the old key retired, so it is not rescanned forever',
+   store.getItem(`planit.trip.v1.${older.id}`) === null);
+
+// Junk under a trip-shaped key loses only itself.
+store.setItem('planit.trip.v2.trip_garbage', 'not json at all');
+eq('one unreadable trip does not cost the others',
+   listTrips().filter((t) => t.id === libTrip.id || t.id === older.id).length, 2);
+
+// Deleting is still deleting — the rebuild must not resurrect it.
+deleteTrip(older.id);
+ok('a deleted trip stays deleted', !listTrips().some((t) => t.id === older.id));
+eq('and its storage is gone', store.getItem(`planit.trip.v2.${older.id}`), null);
+
+// A failed save is reported rather than swallowed.
+store.full = true;
+eq('a save that cannot happen says so', writeTrip(reidentify(conferenceTrip())), 'quota');
+ok('and storage reports itself broken', !storageWorks());
+store.full = false;
 
 /* ============ report ============ */
 

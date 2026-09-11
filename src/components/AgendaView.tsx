@@ -11,16 +11,24 @@ import { KIND_LABEL } from '../core/layout';
 import { axisZone, resolveZone } from '../core/clock';
 import { iconFor } from '../core/ics';
 import { initials } from './SegmentChrome';
-import { IconPlus } from './Icons';
+import { IconPlus, IconTrash } from './Icons';
+import { Tip } from './Tooltip';
 
 export function AgendaView({
-  trip, segments, clock, selectedId, focusPersonId, issues, onSelect, onAddOnDay,
+  trip, segments, clock, selectedId, focusPersonId, issues, readOnly,
+  onSelect, onAddOnDay, onAddFirst, onDelete,
 }: {
   trip: Trip; segments: Segment[]; clock: ClockMode; selectedId: ID | null;
-  focusPersonId: ID | null; issues: Issue[]; onSelect: (id: ID) => void;
+  focusPersonId: ID | null; issues: Issue[]; readOnly: boolean;
+  onSelect: (id: ID) => void;
   /** Every view needs a way to put something *into* the plan, not just read
    *  it out — here it is the day you are looking at. */
   onAddOnDay: (dayKey: string) => void;
+  /** ...and when there is no day yet, the first day of the trip. */
+  onAddFirst: () => void;
+  /** Take a line out of the plan from the list itself, rather than making
+   *  someone open the details panel to find the button. */
+  onDelete: (id: ID) => void;
 }) {
   const zone = axisZone(clock, trip);
 
@@ -46,8 +54,14 @@ export function AgendaView({
       <div className="empty">
         <p className="empty__title">Nothing scheduled yet</p>
         <p className="empty__body">
-          Add a block from the timeline, or drag an idea off the board onto a day.
+          Start here, or draw one straight onto the timeline — an empty agenda is the
+          one view that cannot show you how.
         </p>
+        {!readOnly && (
+          <button className="btn btn--primary" onClick={onAddFirst}>
+            <IconPlus size={15} /> Add the first block
+          </button>
+        )}
       </div>
     );
   }
@@ -68,13 +82,19 @@ export function AgendaView({
                   ? ` · ${fmtDuration(totalMin * MIN)} scheduled`
                   : ` · ${peopleOn} ${peopleOn === 1 ? 'person' : 'people'} · ${fmtDuration(totalMin * MIN)} combined`}
               </p>
-              <button
-                type="button" className="btn btn--sm btn--ghost agenda__add"
-                onClick={() => onAddOnDay(key)}
-                title={`Add something to ${fmtDate(dayEpoch, zone, 'medium')}`}
-              >
-                <IconPlus size={13} /> Add
-              </button>
+              {!readOnly && (
+                <Tip
+                  label={`Add to ${fmtDate(dayEpoch, zone, 'medium')}`}
+                  hint="Drops a new block on this day at ten in the morning, and opens its details so you can say what it is."
+                >
+                  <button
+                    type="button" className="btn btn--sm btn--ghost agenda__add"
+                    onClick={() => onAddOnDay(key)}
+                  >
+                    <IconPlus size={13} /> Add
+                  </button>
+                </Tip>
+              )}
             </header>
 
             <ol className="agenda__list">
@@ -89,70 +109,86 @@ export function AgendaView({
 
                 return (
                   <li key={seg.id}>
-                    <button
-                      type="button"
-                      className="agenda__item"
-                      data-kind={seg.kind}
-                      title="Open this block's details"
-                      aria-selected={selectedId === seg.id}
-                      onClick={() => onSelect(seg.id)}
-                    >
-                      <span className="agenda__time">
-                        <time dateTime={new Date(seg.start).toISOString()}>{fmtTime(seg.start, { zone })}</time>
-                        <time dateTime={new Date(seg.end).toISOString()} style={{ color: 'var(--ink-3)' }}>
-                          {fmtTime(seg.end, { zone })}
-                        </time>
-                        {crossZone && <small>{fmtRange(seg.start, seg.end, { zone: segZone })} {zoneCity(segZone)}</small>}
-                      </span>
-
-                      <span className="agenda__main">
-                        <span className="agenda__title">
-                          {seg.title}
-                          {seg.status === 'tentative' && <span className="chip chip--warn">tentative</span>}
-                          {seg.status === 'cancelled' && <span className="chip chip--danger">cancelled</span>}
-                          {conflictIds.has(seg.id) && <span className="chip chip--danger">clash</span>}
+                    <div className="agenda__row">
+                      <button
+                        type="button"
+                        className="agenda__item"
+                        data-kind={seg.kind}
+                        aria-selected={selectedId === seg.id}
+                        onClick={() => onSelect(seg.id)}
+                      >
+                        <span className="agenda__time">
+                          <time dateTime={new Date(seg.start).toISOString()}>{fmtTime(seg.start, { zone })}</time>
+                          <time dateTime={new Date(seg.end).toISOString()} style={{ color: 'var(--ink-3)' }}>
+                            {fmtTime(seg.end, { zone })}
+                          </time>
+                          {crossZone && <small>{fmtRange(seg.start, seg.end, { zone: segZone })} {zoneCity(segZone)}</small>}
                         </span>
-                        <span className="agenda__sub">
-                          <span>{iconFor(seg)} {KIND_LABEL[seg.kind] ?? seg.kind}</span>
-                          <span>{fmtDuration(seg.end - seg.start)}</span>
-                          {fromPlace && place ? <span>{fromPlace.name} → {place.name}</span> : place ? <span>{place.name}</span> : null}
-                          {/* "T5" on its own is airline shorthand. Spelling it
-                              out costs four characters and saves a guess. */}
-                          {seg.flight && (
-                            <span className="mono">
-                              {seg.flight.carrier}{seg.flight.number}
-                              {seg.flight.terminal ? ` · Terminal ${seg.flight.terminal}` : ''}
-                            </span>
-                          )}
-                        </span>
-                        {seg.notes && <span className="agenda__notes">{seg.notes}</span>}
-                      </span>
 
-                      <span className="agenda__who">
-                        {seg.everyone ? (
-                          <span className="chip chip--accent">Everyone</span>
-                        ) : (
-                          <span className="avatar-stack">
-                            {people.slice(0, 4).map((id) => {
-                              const p = trip.people.find((x) => x.id === id);
-                              return p ? (
-                                <span key={id} className="avatar" style={{ ['--c' as string]: p.color }} title={p.name}>
-                                  {initials(p.name)}
-                                </span>
-                              ) : null;
-                            })}
-                            {people.length > 4 && (
-                              <span className="avatar" style={{ ['--c' as string]: 'var(--ink-3)' }}>+{people.length - 4}</span>
+                        <span className="agenda__main">
+                          <span className="agenda__title">
+                            {seg.title}
+                            {seg.status === 'tentative' && <span className="chip chip--warn">tentative</span>}
+                            {seg.status === 'cancelled' && <span className="chip chip--danger">cancelled</span>}
+                            {conflictIds.has(seg.id) && <span className="chip chip--danger">clash</span>}
+                          </span>
+                          <span className="agenda__sub">
+                            <span>{iconFor(seg)} {KIND_LABEL[seg.kind] ?? seg.kind}</span>
+                            <span>{fmtDuration(seg.end - seg.start)}</span>
+                            {fromPlace && place ? <span>{fromPlace.name} → {place.name}</span> : place ? <span>{place.name}</span> : null}
+                            {/* "T5" on its own is airline shorthand. Spelling it
+                                out costs four characters and saves a guess. */}
+                            {seg.flight && (
+                              <span className="mono">
+                                {seg.flight.carrier}{seg.flight.number}
+                                {seg.flight.terminal ? ` · Terminal ${seg.flight.terminal}` : ''}
+                              </span>
                             )}
                           </span>
-                        )}
-                        <span className="sr-only">
-                          {seg.everyone ? 'Everyone attending' : people.length
-                            ? `With ${people.map((id) => trip.people.find((p) => p.id === id)?.name).filter(Boolean).join(', ')}`
-                            : 'Nobody assigned'}
+                          {seg.notes && <span className="agenda__notes">{seg.notes}</span>}
                         </span>
-                      </span>
-                    </button>
+
+                        <span className="agenda__who">
+                          {seg.everyone ? (
+                            <span className="chip chip--accent">Everyone</span>
+                          ) : (
+                            <span className="avatar-stack">
+                              {people.slice(0, 4).map((id) => {
+                                const p = trip.people.find((x) => x.id === id);
+                                return p ? (
+                                  <span key={id} className="avatar" style={{ ['--c' as string]: p.color }} title={p.name}>
+                                    {initials(p.name)}
+                                  </span>
+                                ) : null;
+                              })}
+                              {people.length > 4 && (
+                                <span className="avatar" style={{ ['--c' as string]: 'var(--ink-3)' }}>+{people.length - 4}</span>
+                              )}
+                            </span>
+                          )}
+                          <span className="sr-only">
+                            {seg.everyone ? 'Everyone attending' : people.length
+                              ? `With ${people.map((id) => trip.people.find((p) => p.id === id)?.name).filter(Boolean).join(', ')}`
+                              : 'Nobody assigned'}
+                          </span>
+                        </span>
+                      </button>
+                      {!readOnly && (
+                        <Tip
+                          label="Remove from the plan" keys="⌫"
+                          hint={`Takes “${seg.title}” out of the trip. The message that follows offers an undo.`}
+                          side="left"
+                        >
+                          <button
+                            type="button" className="agenda__del"
+                            onClick={() => onDelete(seg.id)}
+                            aria-label={`Remove ${seg.title} from the trip`}
+                          >
+                            <IconTrash size={14} />
+                          </button>
+                        </Tip>
+                      )}
+                    </div>
 
                     {hop && (
                       <p className="agenda__travel" data-short={hop.short}>

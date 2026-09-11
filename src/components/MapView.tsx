@@ -9,11 +9,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import type { ClockMode, ID, Place, Segment, Trip } from '../core/types';
-import { MIN, dateKey, fmtDuration, fmtTime } from '../core/time';
+import { MIN, dateKey, dateKeyToEpoch, fmtDate, fmtDuration, fmtTime } from '../core/time';
 import { attendeesOf } from '../core/schedule';
 import { estimateTravel, greatCircle, overheadMinutes, routeVia, trafficLabel, travelMinutes } from '../core/travel';
 import { axisZone } from '../core/clock';
 import { iconFor } from '../core/ics';
+import { IconPlus, IconTrash } from './Icons';
+import { Tip } from './Tooltip';
 
 const KIND_COLOR: Record<string, string> = {
   airport: '#4cc9f0', hotel: '#9d8cff', venue: '#ff6b35', restaurant: '#ffb020',
@@ -34,10 +36,14 @@ interface Hop {
 }
 
 export function MapView({
-  trip, segments, clock, dayKey, focusPersonId, selectedId, onSelect,
+  trip, segments, clock, dayKey, focusPersonId, selectedId, onSelect, onAddStop, onRemoveStop,
 }: {
   trip: Trip; segments: Segment[]; clock: ClockMode; dayKey: string | null;
   focusPersonId: ID | null; selectedId: ID | null; onSelect: (id: ID) => void;
+  /** The map is a view of the plan, not a read-out of it: a day with a hole in
+   *  it should be fixable from here. Absent on a read-only share link. */
+  onAddStop?: () => void;
+  onRemoveStop?: (id: ID) => void;
 }) {
   const zone = axisZone(clock, trip);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -208,26 +214,80 @@ export function MapView({
 
   const totalMin = hops.reduce((a, h) => a + h.needMin, 0);
   const totalKm = Math.round(hops.reduce((a, h) => a + h.distanceKm, 0));
+  const dayName = dayKey ? fmtDate(dateKeyToEpoch(dayKey, zone), zone, 'medium') : '';
 
   return (
     <div className="mapwrap">
       <div ref={hostRef} style={{ height: '100%' }} role="application" aria-label="Map of the itinerary" />
 
       <div className="map-overlay">
-        {hops.length > 0 && (
-          <div className="map-route-card">
-            <strong style={{ fontSize: 'var(--step--1)' }}>
-              {focusPersonId ? trip.people.find((p) => p.id === focusPersonId)?.name : 'All stops'}
-              {dayKey ? ` · ${dayKey}` : ''}
-            </strong>
-            <span className="mono">{stops.length} stops · {totalKm} km · {fmtDuration(totalMin * MIN)} moving</span>
-            <span style={{ color: 'var(--ink-3)' }}>
-              {live === 'osrm' ? 'Road routes from OSRM, traffic modelled for departure time.'
-                : live === 'offline' ? 'Routing unavailable — straight-line estimates shown.'
-                : 'No journeys to route.'}
-            </span>
-          </div>
-        )}
+        <div className="map-route-card">
+          <strong style={{ fontSize: 'var(--step--1)' }}>
+            {focusPersonId ? trip.people.find((p) => p.id === focusPersonId)?.name : 'All stops'}
+            {dayName ? ` · ${dayName}` : ''}
+          </strong>
+          <span className="mono">
+            {stops.length} {stops.length === 1 ? 'stop' : 'stops'}
+            {hops.length > 0 ? ` · ${totalKm} km · ${fmtDuration(totalMin * MIN)} moving` : ''}
+          </span>
+          <span style={{ color: 'var(--ink-3)' }}>
+            {live === 'osrm' ? 'Road routes from OSRM, traffic modelled for departure time.'
+              : live === 'offline' ? 'Routing unavailable — straight-line estimates shown.'
+              : 'No journeys to route.'}
+          </span>
+
+          {/* The stops in order, each one removable. A map you can only read
+              sends you back to another view to change what it is showing. */}
+          {stops.length > 0 && (
+            <ol className="map-stops">
+              {stops.map((s, i) => (
+                <li key={s.seg.id} className="map-stop" data-active={s.seg.id === selectedId}>
+                  <Tip
+                    label={s.seg.title}
+                    hint={`${fmtTime(s.seg.start, { zone })} at ${s.place.name}. Click to open its details and centre the map on it.`}
+                    side="left"
+                  >
+                    <button type="button" className="map-stop__go" onClick={() => onSelect(s.seg.id)}>
+                      <span className="map-stop__n">{i + 1}</span>
+                      <span className="map-stop__name">{s.seg.title}</span>
+                      <span className="mono map-stop__t">{fmtTime(s.seg.start, { zone })}</span>
+                    </button>
+                  </Tip>
+                  {onRemoveStop && (
+                    <Tip
+                      label="Remove this stop" keys="⌫"
+                      hint={`Takes “${s.seg.title}” out of the plan, and the journeys either side of it off the map.`}
+                      side="left"
+                    >
+                      <button
+                        type="button" className="map-stop__del"
+                        onClick={() => onRemoveStop(s.seg.id)}
+                        aria-label={`Remove ${s.seg.title} from the trip`}
+                      >
+                        <IconTrash size={13} />
+                      </button>
+                    </Tip>
+                  )}
+                </li>
+              ))}
+            </ol>
+          )}
+
+          {/* When there is nothing here at all, the card in the middle of the
+              map is the one making this offer — two Add buttons on one screen
+              is a choice nobody has. */}
+          {onAddStop && stops.length > 0 && (
+            <Tip
+              label={dayName ? `Add a stop on ${dayName}` : 'Add a stop'}
+              hint="Drops a new block on this day and opens its details, where you can search for the place it happens at."
+              side="left"
+            >
+              <button type="button" className="btn btn--sm btn--primary" onClick={onAddStop}>
+                <IconPlus size={13} /> Add a stop
+              </button>
+            </Tip>
+          )}
+        </div>
       </div>
 
       <div className="map-legend">
@@ -261,8 +321,24 @@ export function MapView({
       </div>
 
       {stops.length === 0 && (
-        <div className="map-overlay" style={{ left: '50%', top: '50%', transform: 'translate(-50%,-50%)', right: 'auto' }}>
-          <div className="map-route-card">Nothing mapped for this selection.</div>
+        <div className="map-overlay map-overlay--middle">
+          <div className="map-route-card">
+            <strong>Nothing mapped for this day</strong>
+            <span style={{ color: 'var(--ink-3)' }}>
+              A block appears here once it has a place. Add one, then set its place in the
+              details panel.
+            </span>
+            {onAddStop && (
+              <Tip
+                label={dayName ? `Add a stop on ${dayName}` : 'Add a stop'}
+                hint="Drops a new block on this day and opens its details, where you can search for the place it happens at."
+              >
+                <button type="button" className="btn btn--sm btn--primary" onClick={onAddStop}>
+                  <IconPlus size={13} /> Add a stop
+                </button>
+              </Tip>
+            )}
+          </div>
         </div>
       )}
     </div>

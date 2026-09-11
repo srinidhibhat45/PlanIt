@@ -8,7 +8,8 @@ const GROUPS: { title: string; rows: [string, string][] }[] = [
     rows: [
       ['⌘K / Ctrl K', 'Command palette — every action by name'],
       ['?', 'This help'],
-      ['1 – 7', 'Jump to a view'],
+      ['1 – 8', 'Jump to a view'],
+      ['N', 'Add a block on the day you are looking at'],
       ['⌘Z / ⌘⇧Z', 'Undo / redo'],
       ['/', 'Search the itinerary'],
       ['[ / ]', 'Previous / next day'],
@@ -39,6 +40,7 @@ const GROUPS: { title: string; rows: [string, string][] }[] = [
     rows: [
       ['Drag empty lane', 'Draw a new block where it goes — across on the timeline, down in the day grid'],
       ['Click empty lane', 'The same, one hour long'],
+      ['+ on a lane head', 'Add a block into that lane without drawing it'],
       ['Tab', 'Enter the grid'],
       ['← → ↑ ↓', 'Move between blocks'],
       ['Space', 'Pick a block up'],

@@ -8,6 +8,7 @@ import { branchStats } from '../core/branch';
 import { zoneAbbr, zoneCity } from '../core/time';
 import { initials } from './SegmentChrome';
 import { IconChevron, IconPlus, IconSearch } from './Icons';
+import { Tip } from './Tooltip';
 
 const ALL_KINDS: SegmentKind[] = ['flight', 'transfer', 'checkin', 'checkout', 'session', 'workshop', 'meal', 'activity', 'free', 'rest', 'buffer', 'note'];
 
@@ -33,12 +34,18 @@ export function Rail({
           <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--ink-3)', pointerEvents: 'none' }}>
             <IconSearch size={15} />
           </span>
-          <input
-            id="rail-q" className="input" type="search" placeholder="Search titles, places, tags…"
-            style={{ paddingLeft: '2.1rem' }}
-            value={filters.query}
-            onChange={(e) => onFilters({ query: e.target.value })}
-          />
+          <Tip
+            label="Search the itinerary" keys="/"
+            hint="Filters every view at once — titles, places and tags. Clear it to get the whole plan back."
+            side="right"
+          >
+            <input
+              id="rail-q" className="input" type="search" placeholder="Search titles, places, tags…"
+              style={{ paddingLeft: '2.1rem' }}
+              value={filters.query}
+              onChange={(e) => onFilters({ query: e.target.value })}
+            />
+          </Tip>
         </div>
       </div>
 
@@ -70,28 +77,37 @@ export function Rail({
             );
           })}
         </ul>
-        <button
-          className="btn btn--sm rail__add" onClick={onAddPerson}
-          title="Add someone to the trip — their home city and dates, so the plan can be checked against them"
+        <Tip
+          label="Add someone to the trip"
+          hint="Their home city, their clock and the dates they can be there — everything the clash checks need. They get their own lane on the timeline."
+          side="right"
         >
-          <IconPlus size={13} /> Add someone
-        </button>
+          <button className="btn btn--sm rail__add" onClick={onAddPerson}>
+            <IconPlus size={13} /> Add someone
+          </button>
+        </Tip>
         <div className="row" style={{ marginTop: 'var(--s-2)' }}>
-          <button
-            className="btn btn--sm btn--ghost" onClick={() => onFilters({ personIds: [] })}
-            disabled={filters.personIds.length === 0}
-            title="Stop filtering by person — show everybody's blocks again"
+          <Tip label="Clear the people filter" hint="Puts everybody's blocks back into every view." side="right">
+            <button
+              className="btn btn--sm btn--ghost" onClick={() => onFilters({ personIds: [] })}
+              disabled={filters.personIds.length === 0}
+            >
+              Clear
+            </button>
+          </Tip>
+          <Tip
+            label="Solo view"
+            hint="The whole app as one person sees it: their blocks, their clock, and new blocks are theirs."
+            side="right"
           >
-            Clear
-          </button>
-          <button
-            className="btn btn--sm btn--ghost"
-            aria-pressed={!!focusPersonId}
-            title="Show one person's trip only, as they would see it"
-            onClick={() => onFocusPerson(focusPersonId ? null : (filters.personIds[0] ?? trip.people[0]?.id ?? null))}
-          >
-            {focusPersonId ? `Solo: ${trip.people.find((p) => p.id === focusPersonId)?.name.split(' ')[0]}` : 'Solo view'}
-          </button>
+            <button
+              className="btn btn--sm btn--ghost"
+              aria-pressed={!!focusPersonId}
+              onClick={() => onFocusPerson(focusPersonId ? null : (filters.personIds[0] ?? trip.people[0]?.id ?? null))}
+            >
+              {focusPersonId ? `Solo: ${trip.people.find((p) => p.id === focusPersonId)?.name.split(' ')[0]}` : 'Solo view'}
+            </button>
+          </Tip>
         </div>
       </Section>
 

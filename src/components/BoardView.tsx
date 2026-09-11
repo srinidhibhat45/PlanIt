@@ -8,6 +8,7 @@ import { attendeesOf } from '../core/schedule';
 import { axisZone } from '../core/clock';
 import { initials } from './SegmentChrome';
 import { IconPlus, IconSparkle, IconTrash } from './Icons';
+import { Tip } from './Tooltip';
 
 export function BoardView({
   trip, clock, onPromote, onAddIdea, onDeleteIdea, onVote, onAnnounce,
@@ -81,9 +82,11 @@ export function BoardView({
             onChange={(e) => setDraft(e.target.value)}
             aria-label="New idea"
           />
-          <button className="btn btn--icon" type="submit" title="Add this idea to the backlog" aria-label="Add idea">
-            <IconPlus />
-          </button>
+          <Tip label="Add this idea" hint="Parks it in the backlog with no time attached. Drag it onto a day, or use Schedule on…, when it becomes a plan.">
+            <button className="btn btn--icon" type="submit" aria-label="Add idea">
+              <IconPlus />
+            </button>
+          </Tip>
         </form>
 
         <ul className="board__list">
@@ -149,28 +152,38 @@ export function BoardView({
                     </div>
                   </div>
                   <div className="row">
-                    <button
-                      type="button" className="btn btn--ghost btn--sm" style={{ marginLeft: 'auto' }}
-                      aria-label={`Delete idea ${idea.title}`}
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onClick={() => onDeleteIdea(idea.id)}
-                    ><IconTrash size={14} /></button>
+                    <Tip
+                      label="Remove this idea"
+                      hint="Takes it off the backlog. Nothing in the plan changes — an idea has never been scheduled."
+                      side="left"
+                    >
+                      <button
+                        type="button" className="btn btn--ghost btn--sm" style={{ marginLeft: 'auto' }}
+                        aria-label={`Delete idea ${idea.title}`}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={() => onDeleteIdea(idea.id)}
+                      ><IconTrash size={14} /></button>
+                    </Tip>
                   </div>
 
                   <label className="sr-only" htmlFor={`sched-${idea.id}`}>Schedule {idea.title} on a day</label>
-                  <select
-                    id={`sched-${idea.id}`}
-                    className="input"
-                    value=""
-                    title={`Put “${idea.title}” on a day — it leaves the backlog and joins the plan`}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onChange={(e) => { if (e.target.value) place(idea, e.target.value); }}
+                  <Tip
+                    label="Schedule it on a day"
+                    hint="Finds the first free evening on the day you pick. It leaves the backlog and becomes a block in the plan."
                   >
-                    <option value="">Schedule on…</option>
-                    {days.map((d) => (
-                      <option key={d} value={d}>{fmtDate(dateKeyToEpoch(d, zone), zone, 'medium')}</option>
-                    ))}
-                  </select>
+                    <select
+                      id={`sched-${idea.id}`}
+                      className="input"
+                      value=""
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onChange={(e) => { if (e.target.value) place(idea, e.target.value); }}
+                    >
+                      <option value="">Schedule on…</option>
+                      {days.map((d) => (
+                        <option key={d} value={d}>{fmtDate(dateKeyToEpoch(d, zone), zone, 'medium')}</option>
+                      ))}
+                    </select>
+                  </Tip>
                 </div>
               </li>
             );

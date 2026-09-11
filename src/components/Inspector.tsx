@@ -11,6 +11,7 @@ import { googleCalendarUrl, outlookUrl, iconFor } from '../core/ics';
 import { estimateTravel, overheadMinutes, trafficLabel, travelMinutes } from '../core/travel';
 import { initials } from './SegmentChrome';
 import { IconClose, IconCopy, IconLink, IconLock, IconTrash } from './Icons';
+import { Tip } from './Tooltip';
 
 const KINDS: SegmentKind[] = ['flight', 'transfer', 'checkin', 'checkout', 'session', 'workshop', 'meal', 'activity', 'free', 'rest', 'buffer', 'note'];
 const STATUSES: SegmentStatus[] = ['confirmed', 'tentative', 'cancelled'];
@@ -277,34 +278,38 @@ export function Inspector({
       <hr className="divider" />
 
       <div className="row" style={{ flexWrap: 'wrap' }}>
-        <button type="button" className="btn btn--sm" aria-pressed={!!seg.locked}
-          title="A locked block is never moved by auto-arrange, and warns before you drag it"
-          onClick={() => onPatch(seg.id, { locked: !seg.locked }, seg.locked ? 'Unlocked' : 'Locked')}>
-          <IconLock size={14} /> {seg.locked ? 'Locked' : 'Lock'}
-        </button>
-        <button
-          type="button" className="btn btn--sm" onClick={() => onDuplicate(seg.id)}
-          title="Make a copy of this block, offset slightly so you can see both"
-        >
-          <IconCopy size={14} /> Duplicate
-        </button>
-        <a
-          className="btn btn--sm" href={googleCalendarUrl(seg, trip)} target="_blank" rel="noreferrer noopener"
-          title="Open this one block in Google Calendar, in a new tab"
-        >
-          <IconLink size={14} /> Google
-        </a>
-        <a
-          className="btn btn--sm" href={outlookUrl(seg, trip)} target="_blank" rel="noreferrer noopener"
-          title="Open this one block in Outlook, in a new tab"
-        >
-          <IconLink size={14} /> Outlook
-        </a>
-        <button type="button" className="btn btn--sm btn--danger" style={{ marginLeft: 'auto' }}
-          title={'Remove this block from the trip · \u232B\nUndoable'}
-          onClick={() => { onDelete(seg.id); onClose(); }}>
-          <IconTrash size={14} /> Delete
-        </button>
+        <Tip label={seg.locked ? 'Unlock this block' : 'Lock this block'}
+          hint="A locked block is never moved by auto-arrange or by the board resolving, and warns before you drag it.">
+          <button type="button" className="btn btn--sm" aria-pressed={!!seg.locked}
+            onClick={() => onPatch(seg.id, { locked: !seg.locked }, seg.locked ? 'Unlocked' : 'Locked')}>
+            <IconLock size={14} /> {seg.locked ? 'Locked' : 'Lock'}
+          </button>
+        </Tip>
+        <Tip label="Duplicate" hint="A copy of everything about this block — people, place, notes — starting where this one ends.">
+          <button type="button" className="btn btn--sm" onClick={() => onDuplicate(seg.id)}>
+            <IconCopy size={14} /> Duplicate
+          </button>
+        </Tip>
+        <Tip label="Open in Google Calendar" hint="This one block, in a new tab. Nothing is shared or synced — it is a pre-filled event form.">
+          <a
+            className="btn btn--sm" href={googleCalendarUrl(seg, trip)} target="_blank" rel="noreferrer noopener"
+          >
+            <IconLink size={14} /> Google
+          </a>
+        </Tip>
+        <Tip label="Open in Outlook" hint="This one block, in a new tab, as a pre-filled event.">
+          <a
+            className="btn btn--sm" href={outlookUrl(seg, trip)} target="_blank" rel="noreferrer noopener"
+          >
+            <IconLink size={14} /> Outlook
+          </a>
+        </Tip>
+        <Tip label="Remove from the trip" keys="⌫" hint="Takes this block out of every view. The message that follows offers an undo." side="left">
+          <button type="button" className="btn btn--sm btn--danger" style={{ marginLeft: 'auto' }}
+            onClick={() => { onDelete(seg.id); onClose(); }}>
+            <IconTrash size={14} /> Delete
+          </button>
+        </Tip>
       </div>
 
       {related.some((i) => i.segmentIds.length > 1) && (

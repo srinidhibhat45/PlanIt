@@ -12,16 +12,19 @@ import { axisZone } from '../core/clock';
 import { branchMembers } from '../core/branch';
 import { initials } from './SegmentChrome';
 import { IconPlus, IconShare, IconWarn } from './Icons';
+import { Tip } from './Tooltip';
 
 export function PeopleView({
   trip, clock, onFocusPerson, onExport, onOpenPerson, focusPersonId, issues,
-  onAddPerson, onEditPerson, onSharePerson,
+  onAddPerson, onAddBlockFor, onEditPerson, onSharePerson,
 }: {
   trip: Trip; clock: ClockMode; focusPersonId: ID | null; issues: Issue[];
   onFocusPerson: (id: ID | null) => void;
   onExport: (id: ID) => void;
   onOpenPerson: (id: ID) => void;
   onAddPerson: () => void;
+  /** Put something in the plan for one person without leaving their card. */
+  onAddBlockFor: (id: ID) => void;
   onEditPerson: (id: ID) => void;
   onSharePerson: (id: ID) => void;
 }) {
@@ -48,12 +51,15 @@ export function PeopleView({
             ? 'Nobody on the trip yet'
             : `${trip.people.length} ${trip.people.length === 1 ? 'person' : 'people'}`}
         </p>
-        <button
-          className="btn btn--sm btn--primary" onClick={onAddPerson}
-          title="Add someone to the trip — their home city and dates, so the plan can be checked against them"
+        <Tip
+          label="Add someone to the trip"
+          hint="Their home city, their clock and the dates they can be there — everything the clash checks need."
+          side="left"
         >
-          <IconPlus size={14} /> Add someone
-        </button>
+          <button className="btn btn--sm btn--primary" onClick={onAddPerson}>
+            <IconPlus size={14} /> Add someone
+          </button>
+        </Tip>
       </div>
 
       {trip.people.map((person) => {
@@ -176,41 +182,52 @@ export function PeopleView({
             </div>
 
             <div className="row" style={{ flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                className="btn btn--sm"
-                aria-pressed={isFocused}
-                title={isFocused
-                  ? 'Go back to showing everybody'
-                  : `Narrow every view to what ${person.name.split(' ')[0]} actually does`}
-                onClick={() => onFocusPerson(isFocused ? null : person.id)}
+              <Tip
+                label={`Add a block for ${person.name.split(' ')[0]}`}
+                hint="A new block with them already on it, on the day the rest of the app is showing. Its details open so you can say what it is."
               >
-                {isFocused ? 'Showing only them' : 'Focus on them'}
-              </button>
-              <button
-                type="button" className="btn btn--sm" onClick={() => onOpenPerson(person.id)}
-                title="Open the board on their trip alone"
+                <button
+                  type="button" className="btn btn--sm btn--primary"
+                  onClick={() => onAddBlockFor(person.id)}
+                >
+                  <IconPlus size={13} /> Add a block
+                </button>
+              </Tip>
+              <Tip
+                label={isFocused ? 'Show everybody again' : 'Show only them'}
+                hint={isFocused
+                  ? 'Put the rest of the trip back into every view.'
+                  : `Narrows every view to what ${person.name.split(' ')[0]} actually does — and makes new blocks theirs.`}
               >
-                Their itinerary
-              </button>
-              <button
-                type="button" className="btn btn--sm" onClick={() => onEditPerson(person.id)}
-                title="Home city, dates they are available, dietary notes — everything the checks use"
-              >
-                Edit details
-              </button>
-              <button
-                type="button" className="btn btn--sm" onClick={() => onSharePerson(person.id)}
-                title="Send them a link that opens on just their own itinerary"
-              >
-                <IconShare size={13} /> Give them a link
-              </button>
-              <button
-                type="button" className="btn btn--sm btn--ghost" onClick={() => onExport(person.id)}
-                title="Download their itinerary as an .ics file for any calendar app"
-              >
-                Calendar file
-              </button>
+                <button
+                  type="button"
+                  className="btn btn--sm"
+                  aria-pressed={isFocused}
+                  onClick={() => onFocusPerson(isFocused ? null : person.id)}
+                >
+                  {isFocused ? 'Showing only them' : 'Focus on them'}
+                </button>
+              </Tip>
+              <Tip label="Their itinerary" hint="Opens the board on their trip alone, so you can rearrange just their days.">
+                <button type="button" className="btn btn--sm" onClick={() => onOpenPerson(person.id)}>
+                  Their itinerary
+                </button>
+              </Tip>
+              <Tip label="Edit their details" hint="Home city, the dates they are available, dietary and mobility notes — everything the checks use.">
+                <button type="button" className="btn btn--sm" onClick={() => onEditPerson(person.id)}>
+                  Edit details
+                </button>
+              </Tip>
+              <Tip label="Give them a link" hint="A share link that opens on their own itinerary and nobody else’s.">
+                <button type="button" className="btn btn--sm" onClick={() => onSharePerson(person.id)}>
+                  <IconShare size={13} /> Give them a link
+                </button>
+              </Tip>
+              <Tip label="Calendar file" hint="Downloads their itinerary as an .ics any calendar app can import.">
+                <button type="button" className="btn btn--sm btn--ghost" onClick={() => onExport(person.id)}>
+                  Calendar file
+                </button>
+              </Tip>
             </div>
           </article>
         );

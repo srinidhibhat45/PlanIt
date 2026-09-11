@@ -8,6 +8,8 @@ import { buildLanes, clipToDay, makeVScale, packColumns, segmentsOnDay, snapStep
 import { axisZone } from '../core/clock';
 import { useDrag } from '../hooks/useDrag';
 import { SegmentChrome, describeSegment } from './SegmentChrome';
+import { IconPlus } from './Icons';
+import { Tip } from './Tooltip';
 
 const HEAD_H = 52;
 
@@ -18,7 +20,7 @@ const DRAW_SNAP_MIN = 15;
 
 export function DayView({
   trip, segments, dayKey, laneMode, clock, issues, selectedId, now, personFilter,
-  hourHeight, onSelect, onMove, onResize, onReassign, onAnnounce, onCreateRange,
+  hourHeight, onSelect, onMove, onResize, onReassign, onAnnounce, onCreateRange, onAddInLane,
 }: {
   trip: Trip; segments: Segment[]; dayKey: string; laneMode: LaneMode; clock: ClockMode;
   issues: Issue[]; selectedId: ID | null; now: number; personFilter: ID[];
@@ -31,6 +33,8 @@ export function DayView({
   /** Drag down an empty column to add something there — the same gesture the
    *  timeline uses, so the two views do not have to be learned separately. */
   onCreateRange: (start: number, end: number, laneId: string) => void;
+  /** The "+" on a column head: a block in this column, on this day. */
+  onAddInLane: (laneId: string) => void;
 }) {
   const zone = axisZone(clock, trip);
   const dayStart = useMemo(() => dateKeyToEpoch(dayKey, zone), [dayKey, zone]);
@@ -192,6 +196,18 @@ export function DayView({
                   <span className="dg__colname">{lane.label}</span>
                 </span>
                 <span className="chip">{lane.segments.length}</span>
+                <Tip
+                  label={`Add to ${lane.label}`}
+                  hint="A new block in this column at ten in the morning. Or drag down the column to draw one at the time you want."
+                >
+                  <button
+                    type="button" className="lane__add"
+                    onClick={() => onAddInLane(lane.id)}
+                    aria-label={`Add a block to ${lane.label}`}
+                  >
+                    <IconPlus size={13} />
+                  </button>
+                </Tip>
               </div>
 
               <div

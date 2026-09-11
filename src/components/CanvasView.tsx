@@ -39,6 +39,7 @@ import { KIND_LABEL } from '../core/layout';
 import { DayRibbon, GapChip, TimePop } from './BoardTime';
 import { PlaceSearch } from './PlaceSearch';
 import { initials } from './SegmentChrome';
+import { Tip } from './Tooltip';
 import {
   IconBoard, IconClock, IconClose, IconFrame, IconGrab, IconLink, IconLock, IconNote,
   IconPlus, IconSearch, IconSparkle, IconTarget, IconTrash, IconWarn, IconZoomIn, IconZoomOut,
@@ -102,7 +103,7 @@ const GRID_STEP = 24;
 const FINE_STEP = 4;
 
 export function CanvasView({
-  trip, segments, clock, issues, selectedId, now, handlers,
+  trip, segments, clock, issues, selectedId, now, handlers, addCardRef,
 }: {
   trip: Trip;
   segments: Segment[];
@@ -111,6 +112,10 @@ export function CanvasView({
   selectedId: ID | null;
   now: number;
   handlers: BoardHandlers;
+  /** The app's own Add button hands the board a place to put the card: only
+   *  the board knows where "the middle of what you are looking at" is, and a
+   *  card created without one would exist in the plan but nowhere on screen. */
+  addCardRef?: { current: (() => void) | null };
 }) {
   const zone = axisZone(clock, trip);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -236,6 +241,23 @@ export function CanvasView({
     const r = el.getBoundingClientRect();
     return toWorld(view, clientX - r.left, clientY - r.top);
   }, [view]);
+
+  /** A card in the middle of the view — what the app-wide Add button means on
+   *  the board. Centred on the card, not its corner, so it lands where you
+   *  are looking. */
+  const addCardAtCentre = useCallback(() => {
+    const el = hostRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const mid = toWorld(view, r.width / 2, r.height / 2);
+    handlers.onCreateCard({ x: Math.round(mid.x - CARD_W / 2), y: Math.round(mid.y - CARD_H / 2) });
+  }, [view, handlers]);
+
+  useEffect(() => {
+    if (!addCardRef) return;
+    addCardRef.current = addCardAtCentre;
+    return () => { addCardRef.current = null; };
+  }, [addCardRef, addCardAtCentre]);
 
   /** Refs so the pointer handlers installed at pointerdown never read a stale
    *  closure — the same reason the handlers are wired up synchronously below. */
@@ -1017,77 +1039,70 @@ function Toolbar({
         {tools.map((t) => {
           const key = shortcutFor(t.id);
           return (
-            <button
-              key={t.id} className="bd__tool" aria-pressed={tool === t.id}
-              onClick={() => onTool(t.id)}
-              title={`${t.label} · ${key}\n${t.hint}`}
-              aria-label={`${t.label} tool, shortcut ${key}`}
-            >
-              <t.Icon size={15} />
-            </button>
+            <Tip key={t.id} label={t.label} keys={key} hint={t.hint}>
+              <button
+                className="bd__tool" aria-pressed={tool === t.id}
+                onClick={() => onTool(t.id)}
+                aria-label={`${t.label} tool, shortcut ${key}`}
+              >
+                <t.Icon size={15} />
+              </button>
+            </Tip>
           );
         })}
       </div>
 
       <span className="bd__sep" role="separator" />
 
-      <button
-        className="btn btn--sm" aria-pressed={shelfOpen} onClick={onShelf}
-        title="Search for a place, or paste a Google Maps link — picking one drops a card on the board"
-      >
-        <IconSearch size={14} /> Places
-      </button>
-      <button
-        className="btn btn--sm" aria-pressed={showFlows} onClick={onFlows}
-        title="Show who goes from what to what, bundled — derived from attendance, not from the connectors you drew"
-      >
-        People flows
-      </button>
-      <button
-        className="btn btn--sm" aria-pressed={showTime} onClick={onTime}
-        title="Show the clock: the shape of each day under its frame, and the gap between stacked cards"
-      >
-        <IconClock size={14} /> Times
-      </button>
+      <Tip label="Places" hint="Search for somewhere, or paste a Google Maps link — picking one drops a card for it on the board.">
+        <button className="btn btn--sm" aria-pressed={shelfOpen} onClick={onShelf}>
+          <IconSearch size={14} /> Places
+        </button>
+      </Tip>
+      <Tip label="People flows" hint="Draws who goes from what to what, bundled. Read from who is on each card, not from the connectors you drew.">
+        <button className="btn btn--sm" aria-pressed={showFlows} onClick={onFlows}>
+          People flows
+        </button>
+      </Tip>
+      <Tip label="Times" hint="Puts the clock on the board: the shape of each day under its frame, the gap between stacked cards, and a time on each card you can type into.">
+        <button className="btn btn--sm" aria-pressed={showTime} onClick={onTime}>
+          <IconClock size={14} /> Times
+        </button>
+      </Tip>
 
       <span className="bd__sep" role="separator" />
 
-      <button
-        className="btn btn--sm" onClick={onTidy}
-        title="Lay the board out from the schedule: a frame per day, in time order"
-      >
-        Tidy
-      </button>
-      <button
-        className="btn btn--sm btn--primary" onClick={onResolve}
-        title={'Resolve · \u2318\u21B5\nRead the board and give every framed or wired card a time'}
-      >
-        <IconSparkle size={14} /> Resolve to timeline
-      </button>
+      <Tip label="Tidy" hint="Lays the board out from the schedule instead: a frame per day, cards in time order inside it.">
+        <button className="btn btn--sm" onClick={onTidy}>Tidy</button>
+      </Tip>
+      <Tip label="Resolve to timeline" keys="⌘⏎" hint="Reads the arrangement and gives every framed or wired card a real time. Pinned cards keep the time they have.">
+        <button className="btn btn--sm btn--primary" onClick={onResolve}>
+          <IconSparkle size={14} /> Resolve to timeline
+        </button>
+      </Tip>
 
       {selection > 0 && (
         <>
           <span className="bd__sep" role="separator" />
           <span className="bd__count">{selection} selected</span>
-          <button
-            className="btn btn--sm" onClick={onSubTrip}
-            title="Split these off as a sub-trip — a frame goes round them and only the people you pick go"
-          >
-            <IconBoard size={14} /> Sub-trip
-          </button>
-          <button
-            className="btn btn--sm" onClick={onPin} aria-pressed={pinned}
-            title={'Pin · P\nA pinned card keeps its time when the board resolves'}
-          >
-            <IconLock size={13} /> {pinned ? 'Unpin' : 'Pin time'}
-          </button>
-          <button
-            className="btn btn--sm btn--ghost" onClick={onDelete}
-            title={'Delete · \u232B\nRemove the selected cards from the trip'}
-            aria-label="Delete the selected cards"
-          >
-            <IconTrash size={13} />
-          </button>
+          <Tip label="Split off a sub-trip" hint="A frame goes round these cards and only the people you pick go. Drop a card in later and it joins.">
+            <button className="btn btn--sm" onClick={onSubTrip}>
+              <IconBoard size={14} /> Sub-trip
+            </button>
+          </Tip>
+          <Tip label={pinned ? 'Unpin' : 'Pin time'} keys="P" hint="A pinned card keeps the time it has when the board resolves; everything else is scheduled around it.">
+            <button className="btn btn--sm" onClick={onPin} aria-pressed={pinned}>
+              <IconLock size={13} /> {pinned ? 'Unpin' : 'Pin time'}
+            </button>
+          </Tip>
+          <Tip label="Remove from the trip" keys="⌫" hint="Takes the selected cards out of the plan everywhere, not just off the board. There is an undo in the message that follows.">
+            <button
+              className="btn btn--sm btn--ghost bd__del" onClick={onDelete}
+              aria-label="Delete the selected cards"
+            >
+              <IconTrash size={13} />
+            </button>
+          </Tip>
         </>
       )}
 
@@ -1096,37 +1111,41 @@ function Toolbar({
       {branches.length > 0 && (
         <span className="bd__legend">
           {branches.map((b) => (
-            <button
-              key={b.id} className="bd__legendchip" style={{ ['--c' as string]: b.color }}
-              onClick={() => onFocusBranch(b.id)}
-              title={`Jump to ${b.name}`}
-            >
-              <span className="bd__legenddot" /> {b.name}
-            </button>
+            <Tip key={b.id} label={`Jump to ${b.name}`} hint="Brings this sub-trip's frame into view and selects what is inside it." side="top">
+              <button
+                className="bd__legendchip" style={{ ['--c' as string]: b.color }}
+                onClick={() => onFocusBranch(b.id)}
+              >
+                <span className="bd__legenddot" /> {b.name}
+              </button>
+            </Tip>
           ))}
         </span>
       )}
 
       <span className="bd__zoom">
-        <button
-          className="btn btn--icon btn--sm btn--ghost" onClick={() => onZoom(1 / 1.25)}
-          title={'Zoom out · \u2212'} aria-label="Zoom out"
-        >
-          <IconZoomOut size={14} />
-        </button>
-        <button className="bd__zoomv mono" onClick={onReset} title="Back to 100%">{Math.round(zoom * 100)}%</button>
-        <button
-          className="btn btn--icon btn--sm btn--ghost" onClick={() => onZoom(1.25)}
-          title={'Zoom in · +'} aria-label="Zoom in"
-        >
-          <IconZoomIn size={14} />
-        </button>
-        <button
-          className="btn btn--sm btn--ghost" onClick={onFit}
-          title={'Fit · 0\nBring the whole board into view'}
-        >
-          Fit
-        </button>
+        <Tip label="Zoom out" keys="−" hint="More board, smaller cards. ⌘ + scroll does the same at the pointer." side="top">
+          <button
+            className="btn btn--icon btn--sm btn--ghost" onClick={() => onZoom(1 / 1.25)}
+            aria-label="Zoom out"
+          >
+            <IconZoomOut size={14} />
+          </button>
+        </Tip>
+        <Tip label="Back to 100%" hint="The zoom the board was drawn at — click to return to it." side="top">
+          <button className="bd__zoomv mono" onClick={onReset}>{Math.round(zoom * 100)}%</button>
+        </Tip>
+        <Tip label="Zoom in" keys="+" hint="Closer in, for lining cards up. ⌘ + scroll does the same at the pointer." side="top">
+          <button
+            className="btn btn--icon btn--sm btn--ghost" onClick={() => onZoom(1.25)}
+            aria-label="Zoom in"
+          >
+            <IconZoomIn size={14} />
+          </button>
+        </Tip>
+        <Tip label="Fit" keys="0" hint="Brings everything on the board into view at once." side="top">
+          <button className="btn btn--sm btn--ghost" onClick={onFit}>Fit</button>
+        </Tip>
       </span>
     </div>
   );

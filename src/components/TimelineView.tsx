@@ -21,6 +21,7 @@ import { useDrag } from '../hooks/useDrag';
 import { useMediaQuery } from '../hooks/useUi';
 import { SegmentChrome, describeSegment } from './SegmentChrome';
 import { IconPlus } from './Icons';
+import { Tip } from './Tooltip';
 
 const LANE_W = 208;
 const LANE_W_SMALL = 128;
@@ -49,6 +50,11 @@ export interface TimelineProps {
   /** Drag across an empty lane to add something to the plan there. `laneId` is
    *  the lane it was drawn in, so it lands on the right person. */
   onCreateRange: (start: number, end: number, laneId: string) => void;
+  /** The "+" on a lane head: put a block in this lane on the current day,
+   *  for anyone who has not discovered that you can draw one instead. */
+  onAddInLane: (laneId: string) => void;
+  /** Which day that "+" lands on, in words, so the tooltip can say so. */
+  dayName: string;
   /** A lane per person means the way to get another lane is another person. */
   onAddPerson: () => void;
 }
@@ -57,7 +63,7 @@ export function TimelineView(props: TimelineProps) {
   const {
     trip, segments, laneMode, clock, density, zoomIndex, issues, selectedId, now,
     personFilter, onSelect, onMove, onResize, onReassign, onAnnounce, onZoom, onCreateRange,
-    onAddPerson,
+    onAddInLane, dayName, onAddPerson,
   } = props;
 
   const narrow = useMediaQuery('(max-width: 60rem)');
@@ -388,6 +394,18 @@ export function TimelineView(props: TimelineProps) {
                   <span className="tl__lanename">{lane.label}</span>
                   {lane.sublabel && <span className="tl__lanemeta">{lane.sublabel}</span>}
                 </span>
+                <Tip
+                  label={`Add to ${lane.label}`}
+                  hint={`A new block in this lane${dayName ? ` on ${dayName}` : ''}. Or drag across the lane to draw one at the time you want.`}
+                >
+                  <button
+                    type="button" className="lane__add"
+                    onClick={() => onAddInLane(lane.id)}
+                    aria-label={`Add a block to ${lane.label}`}
+                  >
+                    <IconPlus size={13} />
+                  </button>
+                </Tip>
               </div>
 
               <div
@@ -529,12 +547,11 @@ export function TimelineView(props: TimelineProps) {
         {laneMode === 'person' && (
           <div className="tl__lane tl__lane--add" role="row">
             <div className="tl__lanehead" role="rowheader">
-              <button
-                className="btn btn--sm tl__addperson" onClick={onAddPerson}
-                title="Add someone to the trip — they get their own lane"
-              >
-                <IconPlus size={13} /> Add someone
-              </button>
+              <Tip label="Add someone to the trip" hint="Everyone on the trip gets their own lane here, and their own clock.">
+                <button className="btn btn--sm tl__addperson" onClick={onAddPerson}>
+                  <IconPlus size={13} /> Add someone
+                </button>
+              </Tip>
             </div>
             <div className="tl__track tl__track--empty" style={{ width: totalW }} aria-hidden="true" />
           </div>

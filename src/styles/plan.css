@@ -227,6 +227,10 @@
 .bd__tool[aria-pressed='true'] { background: var(--brand-solid); color: var(--on-brand); }
 .bd__tool:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 
+/* Removing cards is the one destructive thing on this toolbar, so it says so
+   on hover rather than looking like every other ghost button. */
+.bd__del:hover { color: var(--danger-ink); background: var(--danger-soft); }
+
 .bd__zoom { display: flex; align-items: center; gap: 2px; }
 .bd__zoomv {
   min-width: 4ch; text-align: center; font-size: var(--step--2); color: var(--ink-3);

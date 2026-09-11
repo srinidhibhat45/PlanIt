@@ -84,32 +84,6 @@ function steps(trip: Trip): Step[] {
       ),
     },
     {
-      view: 'canvas',
-      eyebrow: 'Step 2 · Plan',
-      title: 'Canvas — think here first',
-      body: (
-        <>
-          <p>
-            A whiteboard, not a calendar. Put cards anywhere, drag a card’s dot onto another
-            to say what follows what, and drop a note or a frame wherever it helps. Nothing
-            touches the clock until you ask it to.
-          </p>
-          <p>
-            Position earns its meaning from frames. A card inside a <b>day frame</b> happens
-            that day; inside a frame, top to bottom is the order of the day and side by side
-            means at the same time. A card inside a <b>sub-trip frame</b> belongs to that
-            group.
-          </p>
-          <p className="tour__note">
-            <b>Tidy</b> lays the existing plan out for you — a frame per day, in time order.
-            <b> Resolve</b> reads the board back and gives every framed or wired card a
-            time, journeys between places costed in. Pin a card to hold its time and let
-            everything else schedule around it.
-          </p>
-        </>
-      ),
-    },
-    {
       view: 'timeline',
       eyebrow: 'Step 1 · See',
       title: 'Timeline — everybody, side by side',
@@ -152,8 +126,34 @@ function steps(trip: Trip): Step[] {
       ),
     },
     {
+      view: 'canvas',
+      eyebrow: 'Step 2 · Plan',
+      title: 'Canvas — think here first',
+      body: (
+        <>
+          <p>
+            A whiteboard, not a calendar. Put cards anywhere, drag a card’s dot onto another
+            to say what follows what, and drop a note or a frame wherever it helps. Nothing
+            touches the clock until you ask it to.
+          </p>
+          <p>
+            Position earns its meaning from frames. A card inside a <b>day frame</b> happens
+            that day; inside a frame, top to bottom is the order of the day and side by side
+            means at the same time. A card inside a <b>sub-trip frame</b> belongs to that
+            group.
+          </p>
+          <p className="tour__note">
+            <b>Tidy</b> lays the existing plan out for you — a frame per day, in time order.
+            <b> Resolve</b> reads the board back and gives every framed or wired card a
+            time, journeys between places costed in. Pin a card to hold its time and let
+            everything else schedule around it.
+          </p>
+        </>
+      ),
+    },
+    {
       view: 'agenda',
-      eyebrow: 'Step 2 · Check',
+      eyebrow: 'Step 3 · Check',
       title: 'Agenda — the plan as plain sentences',
       body: (
         <p>
@@ -165,7 +165,7 @@ function steps(trip: Trip): Step[] {
     },
     {
       view: 'map',
-      eyebrow: 'Step 2 · Check',
+      eyebrow: 'Step 3 · Check',
       title: 'Map — how far apart these places really are',
       body: (
         <p>
@@ -177,7 +177,7 @@ function steps(trip: Trip): Step[] {
     },
     {
       view: 'people',
-      eyebrow: 'Step 2 · Check',
+      eyebrow: 'Step 3 · Check',
       title: 'People — who is here, and how hard their day is',
       body: (
         <p>
@@ -189,7 +189,7 @@ function steps(trip: Trip): Step[] {
     },
     {
       view: 'board',
-      eyebrow: 'Step 3 · Fill',
+      eyebrow: 'Step 4 · Fill',
       title: 'Ideas — things somebody wants to do',
       body: (
         <p>
@@ -200,7 +200,7 @@ function steps(trip: Trip): Step[] {
       ),
     },
     {
-      eyebrow: 'Step 4 · Hand it out',
+      eyebrow: 'Step 5 · Hand it out',
       title: 'Sharing, and the two shortcuts worth knowing',
       body: (
         <>

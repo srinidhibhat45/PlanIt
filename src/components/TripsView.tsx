@@ -10,6 +10,7 @@ import { blankTrip, defaultDates, tripLengthDays, type TripMeta } from '../core/
 import { dateKeyToEpoch, deviceZone, fmtDate } from '../core/time';
 import { isValidZone } from '../core/geo';
 import { IconCopy, IconPlus, IconSparkle, IconTrash, IconUpload } from './Icons';
+import { Tip } from './Tooltip';
 
 const COMMON_ZONES: Zone[] = [
   'Asia/Kolkata', 'Asia/Dubai', 'Asia/Singapore', 'Asia/Bangkok', 'Asia/Tokyo',
@@ -53,18 +54,16 @@ export function TripsView({
               e.target.value = '';
             }}
           />
-          <button
-            className="btn btn--ghost" onClick={() => fileRef.current?.click()}
-            title="Load a trip from a JSON backup you exported earlier"
-          >
-            <IconUpload size={15} /> Import
-          </button>
-          <button
-            className="btn btn--primary" onClick={() => setCreating(true)}
-            title="Start an empty trip — name it, pick the dates, then add who is coming"
-          >
-            <IconPlus size={15} /> New trip
-          </button>
+          <Tip label="Import a trip" hint="Opens a JSON backup you exported from the share dialog earlier. It arrives as a new trip of your own.">
+            <button className="btn btn--ghost" onClick={() => fileRef.current?.click()}>
+              <IconUpload size={15} /> Import
+            </button>
+          </Tip>
+          <Tip label="New trip" hint="An empty itinerary: name it, pick the dates and the zone it happens in, then add who is coming." side="left">
+            <button className="btn btn--primary" onClick={() => setCreating(true)}>
+              <IconPlus size={15} /> New trip
+            </button>
+          </Tip>
         </div>
       </header>
 
@@ -80,12 +79,11 @@ export function TripsView({
               <button className="btn btn--primary btn--lg" onClick={() => setCreating(true)}>
                 <IconPlus size={16} /> Start a trip
               </button>
-              <button
-                className="btn btn--lg" onClick={onLoadExample}
-                title="A fully worked eight-person conference trip, to look around in"
-              >
-                <IconSparkle size={16} /> Open the example
-              </button>
+              <Tip label="Open the example" hint="A fully worked eight-person conference trip — people, flights, clashes and all — to look around in.">
+                <button className="btn btn--lg" onClick={onLoadExample}>
+                  <IconSparkle size={16} /> Open the example
+                </button>
+              </Tip>
             </div>
           </div>
         )}
@@ -96,12 +94,11 @@ export function TripsView({
               <h2 className="library__heading">
                 {trips.length} {trips.length === 1 ? 'trip' : 'trips'}
               </h2>
-              <button
-                className="btn btn--sm btn--ghost" onClick={onLoadExample}
-                title="Add a fully worked eight-person conference trip to look around in"
-              >
-                <IconSparkle size={14} /> Add the example trip
-              </button>
+              <Tip label="Add the example trip" hint="A fully worked eight-person conference trip, added alongside your own. Delete it whenever you like." side="left">
+                <button className="btn btn--sm btn--ghost" onClick={onLoadExample}>
+                  <IconSparkle size={14} /> Add the example trip
+                </button>
+              </Tip>
             </div>
             <ul className="library__grid">
               {trips.map((t) => (
@@ -184,20 +181,22 @@ function TripCard({
             </>
           ) : (
             <>
-              <button
-                className="btn btn--icon btn--sm btn--ghost" onClick={onDuplicate}
-                aria-label={`Duplicate ${meta.name}`}
-                title={`Copy “${meta.name}” — same plan, new trip, nothing shared`}
-              >
-                <IconCopy size={14} />
-              </button>
-              <button
-                className="btn btn--icon btn--sm btn--ghost" onClick={onAskDelete}
-                aria-label={`Delete ${meta.name}`}
-                title={`Delete “${meta.name}” — it asks first`}
-              >
-                <IconTrash size={14} />
-              </button>
+              <Tip label="Duplicate this trip" hint="The same plan as a separate trip. The two share nothing after the copy — change one and the other stays put.">
+                <button
+                  className="btn btn--icon btn--sm btn--ghost" onClick={onDuplicate}
+                  aria-label={`Duplicate ${meta.name}`}
+                >
+                  <IconCopy size={14} />
+                </button>
+              </Tip>
+              <Tip label="Delete this trip" hint="Asks first. Trips live in this browser only, so a deleted one cannot be recovered from anywhere else." side="left">
+                <button
+                  className="btn btn--icon btn--sm btn--ghost" onClick={onAskDelete}
+                  aria-label={`Delete ${meta.name}`}
+                >
+                  <IconTrash size={14} />
+                </button>
+              </Tip>
             </>
           )}
         </div>

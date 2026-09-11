@@ -8,6 +8,7 @@ import type { ClockMode, ID, Trip } from '../core/types';
 import { clockLabel } from '../core/clock';
 import { deviceZone, zoneAbbr, zoneCity } from '../core/time';
 import { IconChevron, IconGlobe } from './Icons';
+import { Tip } from './Tooltip';
 
 export function ClockMenu({ trip, clock, onClock }: {
   trip: Trip; clock: ClockMode; onClock: (c: ClockMode) => void;
@@ -56,19 +57,23 @@ export function ClockMenu({ trip, clock, onClock }: {
 
   return (
     <div className="clockmenu" ref={wrapRef}>
-      <button
-        type="button"
-        className="btn clockmenu__trigger"
-        aria-haspopup="true"
-        aria-expanded={open}
-        aria-controls={id}
-        title={'Which clock every time in the app is written in\nRight now: ' + clockLabel(clock, trip)}
-        onClick={() => setOpen((o) => !o)}
+      <Tip
+        label="Which clock the app writes times in"
+        hint={`Every time on screen is shown in one clock. Right now: ${clockLabel(clock, trip)}. Pick a person to read the plan as they would.`}
       >
-        <IconGlobe size={15} />
-        <span className="clockmenu__label">{clockLabel(clock, trip)}</span>
-        <IconChevron size={13} />
-      </button>
+        <button
+          type="button"
+          className="btn clockmenu__trigger"
+          aria-haspopup="true"
+          aria-expanded={open}
+          aria-controls={id}
+          onClick={() => setOpen((o) => !o)}
+        >
+          <IconGlobe size={15} />
+          <span className="clockmenu__label">{clockLabel(clock, trip)}</span>
+          <IconChevron size={13} />
+        </button>
+      </Tip>
 
       {open && (
         <div className="clockmenu__panel" id={id} role="menu" aria-label="Show times in" ref={listRef}

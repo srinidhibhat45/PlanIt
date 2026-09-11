@@ -36,16 +36,26 @@ import { ShareDialog } from './components/ShareDialog';
 import { KeyboardHelp } from './components/KeyboardHelp';
 import { Tour, hasSeenTour, markTourSeen } from './components/Tour';
 import { ViewHint } from './components/ViewHint';
-import { IconClose, IconLeft, IconPlus, IconRight, IconTarget, IconZoomIn, IconZoomOut } from './components/Icons';
+import {
+  IconClose, IconCopy, IconLeft, IconPlus, IconRight, IconTarget, IconTrash, IconZoomIn, IconZoomOut,
+} from './components/Icons';
+import { Tip } from './components/Tooltip';
 
 interface Prefs {
   view: ViewId; laneMode: LaneMode; density: Density; theme: ThemeMode;
   zoomIndex: number; hourHeight: number; contrast: 'normal' | 'more';
+  /** Bumped when a default changes in a way a saved preference should not
+   *  outlive. Only the changed field is reset; the rest is kept. */
+  v?: number;
 }
+
+/** The timeline is the front door: it is the view that answers "who is doing
+ *  what, and when", and every other view is a way of asking that differently. */
+const PREFS_VERSION = 2;
 
 const DEFAULT_PREFS: Prefs = {
   view: 'timeline', laneMode: 'person', density: 'comfortable', theme: 'dark',
-  zoomIndex: 3, hourHeight: 62, contrast: 'normal',
+  zoomIndex: 3, hourHeight: 62, contrast: 'normal', v: PREFS_VERSION,
 };
 
 const EMPTY_FILTERS: Filters = {
@@ -53,7 +63,7 @@ const EMPTY_FILTERS: Filters = {
 };
 
 export default function App({
-  tripId, initialTrip, onExit, onSaved,
+  tripId, initialTrip, onExit, onSaved, onAdopt,
 }: {
   /** Null when the plan came from a share link rather than the library. */
   tripId: ID | null;
@@ -61,6 +71,10 @@ export default function App({
   onExit: () => void;
   /** Lets the library page refresh its cards after a save. */
   onSaved: () => void;
+  /** Take a plan that arrived in a link and give it a home in the library.
+   *  Without this a copy made from a share link lives only in the tab, and a
+   *  reload throws away everything done to it. */
+  onAdopt: (trip: Trip) => void;
 }) {
   /* ---------- boot ---------- */
   const boot = useMemo<{ trip: Trip; readOnly: boolean; focus?: ID }>(() => {
@@ -74,7 +88,12 @@ export default function App({
   const trip = state.present;
   const [readOnly, setReadOnly] = useState(boot.readOnly);
 
-  const [prefs, setPrefs] = useState<Prefs>(() => loadPrefs(DEFAULT_PREFS));
+  const [prefs, setPrefs] = useState<Prefs>(() => {
+    const saved = loadPrefs(DEFAULT_PREFS);
+    // An older build opened on the board. A preference file from it is nudged
+    // back to the timeline once, and left alone in every other respect.
+    return saved.v === PREFS_VERSION ? saved : { ...saved, view: DEFAULT_PREFS.view, v: PREFS_VERSION };
+  });
   const setPref = useCallback(<K extends keyof Prefs>(k: K, v: Prefs[K]) => {
     setPrefs((p) => { const next = { ...p, [k]: v }; savePrefs(next); return next; });
   }, []);
@@ -110,6 +129,9 @@ export default function App({
   const { toasts, push, dismiss } = useToasts();
   const { message: liveMessage, announce } = useAnnouncer();
   const mainRef = useRef<HTMLDivElement>(null);
+  /** Filled in by the board while it is on screen: only it knows where the
+   *  middle of the view is, and a card added anywhere else would be invisible. */
+  const boardAddRef = useRef<(() => void) | null>(null);
 
   /* ---------- day cursor ---------- */
   const zone = axisZone(clock, trip);
@@ -160,12 +182,29 @@ export default function App({
 
   /* ---------- persistence ----------
      A trip opened from a share link has no home in the library until someone
-     asks for one, so it is deliberately not written here. */
+     asks for one, so it is deliberately not written here.
+
+     A save that fails says so. It used to fail in silence, which is the worst
+     of both worlds: the plan looks saved, the tab keeps working, and the loss
+     only shows up on a reload hours later. */
+  const saveWarned = useRef(false);
   useEffect(() => {
     if (readOnly || !tripId) return;
-    const h = window.setTimeout(() => { writeTrip(trip); onSaved(); }, 400);
+    const h = window.setTimeout(() => {
+      const saved = writeTrip(trip);
+      onSaved();
+      if (saved === 'ok') { saveWarned.current = false; return; }
+      if (saveWarned.current) return;      // once per spell of trouble, not per keystroke
+      saveWarned.current = true;
+      push(
+        saved === 'quota'
+          ? 'This browser is out of room, so that change is not saved. Delete a trip you have finished with, or take a JSON backup.'
+          : 'This browser will not let the page save anything — a private window, or site data blocked. Take a JSON backup before you close the tab.',
+        { tone: 'danger', action: { label: 'Back up', run: () => setShareOpen(true) } },
+      );
+    }, 400);
     return () => clearTimeout(h);
-  }, [trip, readOnly, tripId, onSaved]);
+  }, [trip, readOnly, tripId, onSaved, push]);
 
   /* ---------- derived ---------- */
   /* The board can be wrong in ways the calendar cannot — a loop of connectors,
@@ -257,6 +296,33 @@ export default function App({
     setDayKey(key);
     addSegment({ start: dateKeyToEpoch(key, zone) + 10 * 60 * MIN });
   }, [addSegment, zone]);
+
+  /** What the app-wide Add button does in the view you are actually in.
+   *  Same button, same place, same keystroke — the board just needs to be
+   *  asked where to put the card. */
+  const addHere = useCallback(() => {
+    if (prefs.view === 'canvas' && boardAddRef.current) { boardAddRef.current(); return; }
+    addSegment();
+  }, [prefs.view, addSegment]);
+
+  /** Add into a named lane or column — the "+" that sits on every lane head.
+   *  Drawing on the grid is faster once you know you can; this is how you
+   *  find out that you can. */
+  const addInLane = useCallback((laneId: string) => {
+    addSegment(draftForLane(laneId));
+  }, [addSegment, draftForLane]);
+
+  /** Add something for one person, from their card on the people page. */
+  const addForPerson = useCallback((personId: ID) => {
+    addSegment({ attendeeIds: [personId] });
+  }, [addSegment]);
+
+  const duplicateSegment = useCallback((id: ID) => guard(() => {
+    dispatch({ type: 'segment/duplicate', id });
+    push('Duplicated. The copy starts where the original ends.', {
+      action: { label: 'Undo', run: () => dispatch({ type: 'history/undo' }) },
+    });
+  }), [guard, push]);
 
   const onPatch = useCallback((id: ID, patch: Partial<Segment>, label?: string) =>
     guard(() => dispatch({ type: 'segment/patch', id, patch, label })), [guard]);
@@ -404,12 +470,14 @@ export default function App({
     onAnnounce: announce,
   }), [guard, trip, focusPersonId, dayKey, zone, push, announce]);
 
+  /** "Make my own copy" has to end with the copy *in the library*, under its
+   *  own identity — the library page is the only thing that can survive a
+   *  reload, and the link's fragment is not a home. */
   const makeEditable = useCallback(() => {
     setReadOnly(false);
     clearShareFromLocation();
-    dispatch({ type: 'trip/patch', patch: { id: uid('trip'), name: `${trip.name} (my copy)` }, label: 'Made an editable copy' });
-    push('You now have your own editable copy. It saves in this browser.', { tone: 'ok' });
-  }, [trip.name, push]);
+    onAdopt({ ...trip, name: `${trip.name} (my copy)` });
+  }, [trip, onAdopt]);
 
   const showIssues = useCallback(() => {
     setRailOpen(true);
@@ -509,7 +577,7 @@ export default function App({
       { id: 'clock-event', group: 'Clock', label: 'Times local to each item', run: () => setClock({ type: 'event' }) },
       { id: 'clock-base', group: 'Clock', label: 'Times in trip time', run: () => setClock({ type: 'base' }) },
       { id: 'clock-device', group: 'Clock', label: 'Times on my device clock', run: () => setClock({ type: 'device' }) },
-      { id: 'add', group: 'Edit', label: 'Add a block', hint: 'N', run: () => addSegment() },
+      { id: 'add', group: 'Edit', label: 'Add a block', hint: 'N', run: addHere },
       {
         id: 'board-tidy', group: 'Board', label: 'Tidy the board — a frame per day, in time order',
         run: () => { setPref('view', 'canvas'); boardHandlers.onTidy(); },
@@ -540,7 +608,7 @@ export default function App({
       run: () => jumpToSegment(s.id),
     }));
     return list;
-  }, [trip, prefs, setPref, addSegment, boardHandlers, push, announce, jumpToSegment, printItinerary, hintsOn, setHintsOn, onExit]);
+  }, [trip, prefs, setPref, addHere, boardHandlers, push, announce, jumpToSegment, printItinerary, hintsOn, setHintsOn, onExit]);
 
   /* ---------- hotkeys ---------- */
   useHotkeys([
@@ -554,7 +622,7 @@ export default function App({
     {
       combo: 'n', description: 'New block',
       when: () => prefs.view !== 'canvas',
-      run: () => addSegment(),
+      run: addHere,
     },
     { combo: '/', description: 'Search', run: () => document.getElementById('rail-q')?.focus() },
     { combo: '\\', description: 'Toggle rail', run: () => setRailOpen((r) => !r) },
@@ -653,17 +721,19 @@ export default function App({
             view={prefs.view} trip={trip} dayKey={dayKey} tripDays={tripDays} zone={zone}
             laneMode={prefs.laneMode} zoomIndex={prefs.zoomIndex} hourHeight={prefs.hourHeight}
             focusPersonId={focusPersonId} filtered={filtered.length} total={trip.segments.length}
-            summary={summary}
+            summary={summary} selected={selected} readOnly={readOnly}
             onDay={setDayKey} onStepDay={stepDay}
             onLaneMode={(m) => setPref('laneMode', m)}
             onZoom={(i) => setPref('zoomIndex', i)}
             onHourHeight={(h) => setPref('hourHeight', h)}
-            onAdd={() => addSegment()}
+            onAdd={addHere}
             onClearFocus={() => setFocusPersonId(null)}
             onFocusPerson={setFocusPersonId}
             onToday={() => { const t = dateKey(now, zone); setDayKey(tripDays.includes(t) ? t : tripDays[0]); }}
             onFit={fitZoom}
             onShowIssues={showIssues}
+            onDuplicate={duplicateSegment}
+            onRemove={onDelete}
           />
 
           {hintsOn && <ViewHint view={prefs.view} onDismiss={() => {
@@ -676,6 +746,7 @@ export default function App({
               <CanvasView
                 trip={trip} segments={filtered} clock={clock} issues={issues}
                 selectedId={selectedId} now={now} handlers={boardHandlers}
+                addCardRef={boardAddRef}
               />
             )}
             {prefs.view === 'timeline' && (
@@ -689,6 +760,8 @@ export default function App({
                 onCreateRange={(start, end, laneId) => addSegment({
                   start, end, timezone: zone, ...draftForLane(laneId),
                 })}
+                onAddInLane={addInLane}
+                dayName={dayKey ? fmtDate(dateKeyToEpoch(dayKey, zone), zone, 'medium') : ''}
                 onAddPerson={() => setPersonSheet('new')}
               />
             )}
@@ -701,6 +774,7 @@ export default function App({
                 onCreateRange={(start, end, laneId) => addSegment({
                   start, end, timezone: zone, ...draftForLane(laneId),
                 })}
+                onAddInLane={addInLane}
               />
             )}
             {prefs.view === 'week' && (
@@ -717,6 +791,9 @@ export default function App({
                 {...viewProps} focusPersonId={focusPersonId}
                 onSelect={(id) => setSelectedId(id)}
                 onAddOnDay={addOnDay}
+                onDelete={onDelete}
+                onAddFirst={() => addOnDay(dayKey || trip.startDate)}
+                readOnly={readOnly}
               />
             )}
             {prefs.view === 'map' && (
@@ -725,6 +802,8 @@ export default function App({
                   trip={trip} segments={filtered} clock={clock} dayKey={dayKey}
                   focusPersonId={focusPersonId} selectedId={selectedId}
                   onSelect={(id) => setSelectedId(id)}
+                  onAddStop={readOnly ? undefined : () => addOnDay(dayKey || trip.startDate)}
+                  onRemoveStop={readOnly ? undefined : onDelete}
                 />
               </Suspense>
             )}
@@ -735,6 +814,7 @@ export default function App({
                 onExport={(id) => { downloadIcs(trip, { personId: id }); push('Calendar file downloaded.', { tone: 'ok' }); }}
                 onOpenPerson={(id) => { setFocusPersonId(id); setPref('view', 'canvas'); }}
                 onAddPerson={() => setPersonSheet('new')}
+                onAddBlockFor={addForPerson}
                 onEditPerson={(id) => setPersonSheet(id)}
                 onSharePerson={(id) => { setFocusPersonId(id); setShareOpen(true); }}
               />
@@ -767,7 +847,7 @@ export default function App({
             seg={selected} trip={trip} clock={clock} issues={issues}
             onPatch={onPatch}
             onDelete={onDelete}
-            onDuplicate={(id) => guard(() => { dispatch({ type: 'segment/duplicate', id }); push('Duplicated.'); })}
+            onDuplicate={duplicateSegment}
             onClose={() => setSelectedId(null)}
             onToggleAttendee={(id, personId, on) => guard(() => dispatch({ type: 'segment/assign', id, personId, on }))}
             onSelect={jumpToSegment}
@@ -840,169 +920,247 @@ export default function App({
 
 /* ============================================================ */
 
+
+/** The bar under the tabs: what this view is showing, and the two things every
+ *  view must let you do — put something into the plan, and take it out again.
+ *
+ *  Add and Remove sit in the same place in every view on purpose. Each view
+ *  also has its own quicker way in (draw on a lane, "+" on a day, the card
+ *  tool on the board) but none of those is discoverable from a standing start,
+ *  and a plan you can only add to from one screen is a plan you edit in one
+ *  screen. Every control here carries a `Tip` saying what it does. */
 function ViewBar({
   view, trip, dayKey, tripDays, zone, laneMode, zoomIndex, hourHeight, focusPersonId,
-  filtered, total, summary,
+  filtered, total, summary, selected, readOnly,
   onDay, onStepDay, onLaneMode, onZoom, onHourHeight, onAdd, onClearFocus, onToday, onFit, onFocusPerson,
-  onShowIssues,
+  onShowIssues, onDuplicate, onRemove,
 }: {
   view: ViewId; trip: Trip; dayKey: string; tripDays: string[]; zone: string;
   laneMode: LaneMode; zoomIndex: number; hourHeight: number; focusPersonId: ID | null;
   filtered: number; total: number; summary: { error: number; warning: number; info: number; total: number };
+  /** What Remove and Duplicate act on. Null when nothing is selected. */
+  selected: Segment | null;
+  readOnly: boolean;
   onDay: (k: string) => void; onStepDay: (d: number) => void;
   onLaneMode: (m: LaneMode) => void; onZoom: (i: number) => void; onHourHeight: (h: number) => void;
   onAdd: () => void; onClearFocus: () => void; onToday: () => void; onFit: () => void;
   onFocusPerson: (id: ID | null) => void;
   onShowIssues: () => void;
+  onDuplicate: (id: ID) => void;
+  onRemove: (id: ID) => void;
 }) {
   const person = trip.people.find((p) => p.id === focusPersonId);
   const showDayNav = view === 'day' || view === 'map';
   const showLanes = view === 'timeline' || view === 'day';
+  const meta = VIEWS.find((v) => v.id === view);
+  const dayName = dayKey ? fmtDate(dateKeyToEpoch(dayKey, zone), zone, 'medium') : '';
 
   return (
     <div className="viewbar">
       {showDayNav && (
         <>
-          <button
-            className="btn btn--icon" onClick={() => onStepDay(-1)}
-            title="The day before · [" aria-label="Previous day"
-          >
-            <IconLeft />
-          </button>
+          <Tip label="The day before" keys="[" hint="Step the whole view back one day.">
+            <button className="btn btn--icon" onClick={() => onStepDay(-1)} aria-label="Previous day">
+              <IconLeft />
+            </button>
+          </Tip>
           <label className="sr-only" htmlFor="daypick">Day</label>
-          <select
-            id="daypick" className="input" style={{ width: 'auto' }} value={dayKey}
-            title="Which day this view is showing — also the day new blocks land on"
-            onChange={(e) => onDay(e.target.value)}
-          >
-            {tripDays.map((d) => (
-              <option key={d} value={d}>{fmtDate(dateKeyToEpoch(d, zone), zone, 'long')}</option>
-            ))}
-          </select>
-          <button
-            className="btn btn--icon" onClick={() => onStepDay(1)}
-            title="The day after · ]" aria-label="Next day"
-          >
-            <IconRight />
-          </button>
-          <button
-            className="btn btn--sm" onClick={onToday}
-            title="Jump to today, if today is inside the trip"
-          >
-            <IconTarget size={14} /> Today
-          </button>
+          <Tip label="Which day you are looking at" hint="Also the day a new block lands on when you press Add.">
+            <select
+              id="daypick" className="input" style={{ width: 'auto' }} value={dayKey}
+              onChange={(e) => onDay(e.target.value)}
+            >
+              {tripDays.map((d) => (
+                <option key={d} value={d}>{fmtDate(dateKeyToEpoch(d, zone), zone, 'long')}</option>
+              ))}
+            </select>
+          </Tip>
+          <Tip label="The day after" keys="]" hint="Step the whole view on one day.">
+            <button className="btn btn--icon" onClick={() => onStepDay(1)} aria-label="Next day">
+              <IconRight />
+            </button>
+          </Tip>
+          <Tip label="Today" hint="Jump to today, if today falls inside the trip. Otherwise the first day.">
+            <button className="btn btn--sm" onClick={onToday}>
+              <IconTarget size={14} /> Today
+            </button>
+          </Tip>
         </>
       )}
 
       <label className="sr-only" htmlFor="whopick">Whose plan</label>
-      <select
-        id="whopick" className="input" style={{ width: 'auto' }}
-        value={focusPersonId ?? ''}
-        title="Walk in one person's shoes — every view narrows to what they actually do"
-        onChange={(e) => onFocusPerson(e.target.value ? (e.target.value as ID) : null)}
+      <Tip
+        label="Whose plan to show"
+        hint="Walk in one person’s shoes — every view narrows to what they actually do, and new blocks are theirs."
       >
-        <option value="">Everyone</option>
-        {trip.people.map((p) => <option key={p.id} value={p.id}>Just {p.name}</option>)}
-      </select>
+        <select
+          id="whopick" className="input" style={{ width: 'auto' }}
+          value={focusPersonId ?? ''}
+          onChange={(e) => onFocusPerson(e.target.value ? (e.target.value as ID) : null)}
+        >
+          <option value="">Everyone</option>
+          {trip.people.map((p) => <option key={p.id} value={p.id}>Just {p.name}</option>)}
+        </select>
+      </Tip>
 
       {showLanes && (
         <>
           <label className="sr-only" htmlFor="lanepick">Group lanes by</label>
-          <select
-            id="lanepick" className="input" style={{ width: 'auto' }} value={laneMode}
-            title="What each row stands for. It also decides what a block you draw belongs to"
-            onChange={(e) => onLaneMode(e.target.value as LaneMode)}
+          <Tip
+            label="What each lane stands for"
+            hint="It also decides what a block you draw — or add with the lane’s +  — belongs to."
           >
-            <option value="person">Lane per person</option>
-            <option value="group">Lane per group</option>
-            <option value="place">Lane per place</option>
-            <option value="kind">Lane per type</option>
-            <option value="unified">One lane</option>
-          </select>
+            <select
+              id="lanepick" className="input" style={{ width: 'auto' }} value={laneMode}
+              onChange={(e) => onLaneMode(e.target.value as LaneMode)}
+            >
+              <option value="person">Lane per person</option>
+              <option value="group">Lane per group</option>
+              <option value="place">Lane per place</option>
+              <option value="kind">Lane per type</option>
+              <option value="unified">One lane</option>
+            </select>
+          </Tip>
         </>
       )}
 
       {view === 'timeline' && (
         <div className="row" style={{ gap: 2 }}>
-          <button
-            className="btn btn--icon" onClick={() => onZoom(Math.max(0, zoomIndex - 1))}
-            disabled={zoomIndex === 0}
-            title="Show more days at once · ⌘ + scroll" aria-label="Zoom out"
-          >
-            <IconZoomOut />
-          </button>
-          <span
-            className="mono" title="How much timeline one hour gets"
-            style={{ fontSize: 'var(--step--2)', color: 'var(--ink-3)', width: '3.4rem', textAlign: 'center' }}
-          >
-            {ZOOMS[zoomIndex]}px/h
-          </span>
-          <button
-            className="btn btn--icon" onClick={() => onZoom(Math.min(ZOOMS.length - 1, zoomIndex + 1))}
-            disabled={zoomIndex === ZOOMS.length - 1}
-            title="Show fewer days, in more detail · ⌘ + scroll" aria-label="Zoom in"
-          >
-            <IconZoomIn />
-          </button>
-          <button
-            className="btn btn--sm" onClick={onFit}
-            title="Pick the zoom that fits the whole trip on screen"
-          >
-            Fit trip
-          </button>
+          <Tip label="Show more days at once" keys="⌘ + scroll" hint="Zooms the timeline out. Blocks get narrower and lose their detail.">
+            <button
+              className="btn btn--icon" onClick={() => onZoom(Math.max(0, zoomIndex - 1))}
+              disabled={zoomIndex === 0} aria-label="Zoom out"
+            >
+              <IconZoomOut />
+            </button>
+          </Tip>
+          <Tip label="Timeline zoom" hint="How much width one hour of the trip gets.">
+            <span
+              className="mono"
+              style={{ fontSize: 'var(--step--2)', color: 'var(--ink-3)', width: '3.4rem', textAlign: 'center' }}
+            >
+              {ZOOMS[zoomIndex]}px/h
+            </span>
+          </Tip>
+          <Tip label="Show fewer days, in more detail" keys="⌘ + scroll" hint="Zooms the timeline in, until each block can show its place and times.">
+            <button
+              className="btn btn--icon" onClick={() => onZoom(Math.min(ZOOMS.length - 1, zoomIndex + 1))}
+              disabled={zoomIndex === ZOOMS.length - 1} aria-label="Zoom in"
+            >
+              <IconZoomIn />
+            </button>
+          </Tip>
+          <Tip label="Fit the trip" hint="Picks the zoom that puts the whole trip on screen, as long as it stays readable.">
+            <button className="btn btn--sm" onClick={onFit}>Fit trip</button>
+          </Tip>
         </div>
       )}
 
       {view === 'day' && (
         <div className="row" style={{ gap: 2 }}>
-          <button
-            className="btn btn--icon" onClick={() => onHourHeight(Math.max(34, hourHeight - 14))}
-            title="Squeeze the hours — more of the day on screen" aria-label="Shorter hours"
-          >
-            <IconZoomOut />
-          </button>
-          <button
-            className="btn btn--icon" onClick={() => onHourHeight(Math.min(140, hourHeight + 14))}
-            title="Stretch the hours — more room inside each block" aria-label="Taller hours"
-          >
-            <IconZoomIn />
-          </button>
+          <Tip label="Squeeze the hours" hint="Shorter rows, so more of the day fits on screen at once.">
+            <button
+              className="btn btn--icon" onClick={() => onHourHeight(Math.max(34, hourHeight - 14))}
+              aria-label="Shorter hours"
+            >
+              <IconZoomOut />
+            </button>
+          </Tip>
+          <Tip label="Stretch the hours" hint="Taller rows, so there is room for the detail inside each block.">
+            <button
+              className="btn btn--icon" onClick={() => onHourHeight(Math.min(140, hourHeight + 14))}
+              aria-label="Taller hours"
+            >
+              <IconZoomIn />
+            </button>
+          </Tip>
         </div>
       )}
 
       <div className="grow" />
 
+      {/* The right-hand end never scrolls away: Add and Remove are the two
+          controls that must be reachable at any window width, and the bar
+          scrolls sideways on a narrow one. */}
+      <div className="viewbar__end">
       {person && (
-        <button
-          className="chip chip--accent" onClick={onClearFocus}
-          title={`Stop showing only ${person.name} and go back to everybody`}
-        >
-          Only {person.name} · clear
-        </button>
+        <Tip label={`Showing only ${person.name}`} hint="Click to go back to everybody.">
+          <button className="chip chip--accent" onClick={onClearFocus}>
+            Only {person.name} · clear
+          </button>
+        </Tip>
       )}
-      <span className="chip" title={`${filtered} of ${total} blocks visible`}>
-        {filtered === total ? `${total} blocks` : `${filtered} of ${total} shown`}
-      </span>
+      <Tip
+        label={filtered === total ? `${total} blocks in the plan` : `${filtered} of ${total} blocks shown`}
+        hint={filtered === total
+          ? 'Everything in the trip is visible.'
+          : 'The rest are hidden by the filters in the side panel, or by whose plan you are showing.'}
+      >
+        <span className="chip">
+          {filtered === total ? `${total} blocks` : `${filtered} of ${total} shown`}
+        </span>
+      </Tip>
       {/* Telling someone their plan is broken without giving them a way to
           reach the break is worse than not telling them. */}
       {summary.error > 0 && (
-        <button
-          type="button" className="chip chip--danger chip--action" onClick={onShowIssues}
-          title="Open the list of problems"
+        <Tip
+          label={`${summary.error} ${summary.error === 1 ? 'problem' : 'problems'}`}
+          hint="Clashes and impossible journeys. Opens the list in the side panel, each one linked to the block it is about."
         >
-          {summary.error} {summary.error === 1 ? 'problem' : 'problems'} →
-        </button>
+          <button type="button" className="chip chip--danger chip--action" onClick={onShowIssues}>
+            {summary.error} {summary.error === 1 ? 'problem' : 'problems'} →
+          </button>
+        </Tip>
       )}
 
-      <button
-        className="btn btn--primary btn--sm" onClick={onAdd}
-        title={
-          (dayKey ? `Add a block on ${fmtDate(dateKeyToEpoch(dayKey, zone), zone, 'medium')}` : 'Add a block')
-          + ' · N\nOr draw one straight onto the timeline'
+      {/* The selection's own actions. They live here, in the same place in
+          every view, so "how do I get rid of this" has one answer. */}
+      {selected && !readOnly && (
+        <span className="viewbar__sel">
+          <span className="viewbar__selname" title={selected.title}>{selected.title}</span>
+          <Tip label="Duplicate this block" hint="A copy of everything about it, starting where this one ends.">
+            <button
+              className="btn btn--icon btn--sm btn--ghost"
+              onClick={() => onDuplicate(selected.id)}
+              aria-label={`Duplicate ${selected.title}`}
+            >
+              <IconCopy size={13} />
+            </button>
+          </Tip>
+          <Tip
+            label="Remove this block" keys="⌫"
+            hint="Takes it out of the plan. You get an undo in the message that follows."
+            side="left"
+          >
+            <button
+              className="btn btn--icon btn--sm btn--ghost viewbar__del"
+              onClick={() => onRemove(selected.id)}
+              aria-label={`Remove ${selected.title} from the trip`}
+            >
+              <IconTrash size={13} />
+            </button>
+          </Tip>
+        </span>
+      )}
+
+      <Tip
+        label={
+          view === 'canvas' ? 'Add a card here'
+            : dayKey ? `Add a block on ${dayName}` : 'Add a block'
         }
+        keys={view === 'canvas' ? 'C' : 'N'}
+        hint={
+          view === 'canvas'
+            ? 'Drops a card in the middle of the board and opens its details. Or pick the card tool and click exactly where you want it.'
+            : meta ? `${meta.adds}. Its details open straight away, so you can say what it is.` : undefined
+        }
+        side="left"
       >
-        <IconPlus size={14} /> Add
-      </button>
+        <button className="btn btn--primary btn--sm" onClick={onAdd}>
+          <IconPlus size={14} /> Add
+        </button>
+      </Tip>
+      </div>
     </div>
   );
 }

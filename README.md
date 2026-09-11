@@ -122,11 +122,15 @@ opens on their days alone.
 
 **Eight views of the same plan**
 
+The app opens on the **Timeline** — the view that answers the ordinary question,
+"who is doing what, and when" — and the tabs run in that order. The board is a
+way of *thinking* about a plan, so it comes after the plan itself.
+
 | View | For |
 |---|---|
-| **Canvas** | The board. A whiteboard you arrange by hand, which then resolves onto the calendar. |
 | **Timeline** | Swimlanes per person, group, place or type. The view for spotting who is where. Drag to move, drag edges to resize, drag across lanes to reassign. Stretches where someone is not on the trip yet are shaded and labelled with the date they arrive, so a blank lane is never ambiguous. |
 | **Day** | Hours down the side, a column per person. "Where do I need to be, and when?" |
+| **Canvas** | The board. A whiteboard you arrange by hand, which then resolves onto the calendar. |
 | **Trip** | The whole trip as a day grid. Coarse moves and empty-evening spotting. |
 | **Agenda** | The plain-language itinerary, with journeys between stops spelled out. This is what prints and what a screen reader reads. |
 | **Map** | Real road routes, traffic-adjusted durations, stops numbered in order. |
@@ -219,18 +223,29 @@ gesture that suits its shape:
 
 | | |
 |---|---|
-| **Timeline** | Drag across an empty stretch of lane. The lane decides whose it is — a person lane assigns them, a type lane sets the type, a place lane sets the place. |
-| **Day** | The same gesture, downward. Snapped to the quarter-hour of the *displayed* zone, not of UTC. |
+| **Timeline** | Drag across an empty stretch of lane. The lane decides whose it is — a person lane assigns them, a type lane sets the type, a place lane sets the place. Each lane head also carries a **+** for the same thing without the gesture. |
+| **Day** | The same gesture, downward. Snapped to the quarter-hour of the *displayed* zone, not of UTC. Each column head carries the same **+**. |
 | **Trip** and **Agenda** | Neither has an hour to point at, so each day gets a **+** that drops a block on it at ten in the morning for you to move. |
-| **Canvas** | The card tool, or the places panel. |
+| **Canvas** | The card tool, or the places panel — or **Add**, which drops a card in the middle of what you are looking at, because only the board knows where that is. |
+| **Map** | **Add a stop** puts a block on the day being mapped; give it a place and it appears on the map. |
+| **People** | **Add a block** on somebody's card, with them already on it. |
 | **Ideas** | The backlog, promoted onto a day when it stops being a maybe. |
 
 A press with no drag makes the default hour, so the gesture works before you
 know it is a drag. <kbd>Esc</kbd> mid-draw abandons it.
 
-Removing is <kbd>⌫</kbd> on the selection, from any view, with an undo in the
-toast — it used to be a trip to the details panel. On the board it also deletes
-notes, frames and connectors, because those are selectable there too.
+Underneath all of them is one **Add** button, in the same corner of the view bar
+in every view, on <kbd>N</kbd>, which adds to the day the view bar is showing.
+
+**Removing** has the same rule: <kbd>⌫</kbd> on the selection from any view, and
+a **Remove** button that appears beside Add the moment something is selected —
+same place, every view, with an undo in the toast. The agenda and the map's stop
+list each carry a remove on the row itself, since a list is where you notice a
+line you did not want. On the board <kbd>⌫</kbd> also deletes notes, frames and
+connectors, because those are selectable there too.
+
+**Duplicate** sits next to Remove, and the copy starts where the original ends —
+a copy laid on top of its original is a clash the analyser then has to report.
 
 People are added where people already are: the **+ Add someone** button under
 the rail's list, the row below the last lane on the timeline (a lane per person
@@ -323,9 +338,13 @@ Not a retrofit. Some specifics:
   Keyboard nudges apply exactly the delta they announced; pointer drags snap to
   the grid. On the board it is the arrow keys: one grid step, ⇧ for the fine
   one, announced with the frame the card landed in. Satisfies 2.1.1 and 2.5.7.
-- **Every icon-only control names itself on hover**, with its shortcut, and
-  carries the same wording as its accessible name. Two tools never share a
-  glyph.
+- **Every control explains itself on hover** — a name, its shortcut, and a line
+  saying what it is *for*. These are real tooltips, not the browser's `title`:
+  they appear in about a third of a second (instantly once one has been shown,
+  so running along a toolbar reads as one label following the pointer), they
+  appear on keyboard focus too, and <kbd>Esc</kbd> dismisses them. They are
+  `aria-describedby`, never the accessible *name*, so a screen reader is never
+  at the mercy of hover. Two tools never share a glyph.
 - **Contrast.** Zero AA failures in either theme, verified by measuring every
   visible text node against its real painted background; the lowest ratio is
   4.99:1 and about two thirds of text already clears AAA. A "higher contrast"
@@ -351,15 +370,15 @@ call `window.__audit()`.
 
 ## Keyboard
 
-Every icon-only control names itself on hover, shortcut included, and the full
-list lives behind <kbd>?</kbd>.
+Every control names itself on hover *and* on keyboard focus, shortcut included,
+and the full list lives behind <kbd>?</kbd>.
 
 | Anywhere | |
 |---|---|
 | <kbd>⌘K</kbd> | Command palette — every action by name |
 | <kbd>?</kbd> | Shortcut help |
-| <kbd>1</kbd>–<kbd>7</kbd> | Jump to a view |
-| <kbd>N</kbd> | New block (except on the board, where N is the note tool) |
+| <kbd>1</kbd>–<kbd>8</kbd> | Jump to a view |
+| <kbd>N</kbd> | Add a block on the day the view bar is showing (on the board, <kbd>C</kbd> — N is the note tool there) |
 | <kbd>⌫</kbd> | Delete the selected block |
 | <kbd>/</kbd> | Search |
 | <kbd>[</kbd> <kbd>]</kbd> | Previous / next day |
@@ -410,6 +429,7 @@ src/
     PlaceSearch.tsx  search, paste a map link, or type coordinates
     Tour.tsx       the first-run walkthrough
     ViewHint.tsx   the one-line description under each view's toolbar
+    Tooltip.tsx    the hover/focus tooltip every control explains itself with
   Root.tsx       routing between the library and one open trip
   hooks/         drag machine, toasts, hotkeys, focus trap
   data/          the worked conference example
@@ -461,6 +481,42 @@ small index (`planit.library.v2`), so a large trip is not rewritten every time
 an unrelated one is touched and a corrupt trip loses one trip rather than all of
 them. A plan saved by the earlier single-trip build is adopted into the library
 once, automatically. Clear those keys to reset.
+
+### Your trips survive a deploy
+
+The thing a hosted, browser-stored app must never do is lose somebody's work
+because a new version shipped. Four things make sure it does not:
+
+- **The index is a cache; the trips are the record.** If the index cannot be
+  read — a version this build does not know, a half-written value, anything —
+  the library is rebuilt by reading the trips back out of storage, and the
+  repaired index is written down. Without that, one unreadable index would
+  leave a browser full of trips with nothing pointing at them, and the next
+  save would make it permanent.
+- **Every key a trip has been stored under is still searched.** A trip written
+  under an older key name is adopted and re-homed under the current one, so a
+  future rename orphans nothing. (Covered by tests in `test/run.ts` — wiped
+  index, corrupt index, old key name, junk value, and delete-stays-deleted.)
+- **A save that fails says so.** Out of room, or a browser refusing to store
+  anything, now raises a message offering a JSON backup instead of failing in
+  silence and losing an afternoon at the next reload.
+- **The deploy itself cannot touch it.** `localStorage` is per origin, and a
+  deploy only replaces files: hashed `/assets/*` are immutable, `index.html`
+  is not cached hard so updates land, and there is no service worker holding
+  an old build. Nothing in the app clears storage it did not write.
+
+Two things are still worth knowing, because no amount of code changes them:
+
+- **Storage belongs to one browser on one domain.** A Vercel *preview* URL is a
+  different origin from production, so it has its own, separate trips — use the
+  production domain for real planning. The same goes for another browser,
+  another device, or a private window. Clearing site data clears trips, as it
+  does for any site.
+- **Take the backup for anything that matters.** Share → *Download a JSON
+  backup* writes the whole trip to a file, and Import on the library page reads
+  it back — that, or a share link, is how a plan moves between devices. Trips
+  following you around without one would mean accounts and a server, which this
+  app deliberately does not have.
 
 Nothing leaves the browser except OSRM route lookups, OpenStreetMap tiles, and
 Nominatim place searches — coordinates and search terms only. All three fail

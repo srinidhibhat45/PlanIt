@@ -10,6 +10,7 @@ import { axisZone } from '../core/clock';
 import { iconFor } from '../core/ics';
 import { describeSegment, initials } from './SegmentChrome';
 import { IconPlus } from './Icons';
+import { Tip } from './Tooltip';
 
 /** How many blocks a day cell shows before it defers to the day view. */
 const MAX_PILLS = 6;
@@ -86,26 +87,34 @@ export function WeekView({
               data-droppable={dragging?.overKey === key && dragging.fromKey !== key ? 'over' : undefined}
             >
               <div className="wk__cellhead">
-                <button
-                  type="button"
-                  className="btn btn--ghost btn--sm"
-                  onClick={() => onOpenDay(key)}
-                  title={`Open ${fmtDate(epoch, zone, 'medium')} hour by hour`}
-                  aria-label={`Open ${fmtDate(epoch, zone, 'long')} in the day view`}
+                <Tip
+                  label={`Open ${fmtDate(epoch, zone, 'medium')}`}
+                  hint="Switches to the day view, hour by hour, with a column per person."
                 >
-                  <span className="wk__date">{String(p.day).padStart(2, '0')}</span>
-                  <span className="wk__dow">{fmtDate(epoch, zone, 'weekday')}</span>
-                </button>
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--sm"
+                    onClick={() => onOpenDay(key)}
+                    aria-label={`Open ${fmtDate(epoch, zone, 'long')} in the day view`}
+                  >
+                    <span className="wk__date">{String(p.day).padStart(2, '0')}</span>
+                    <span className="wk__dow">{fmtDate(epoch, zone, 'weekday')}</span>
+                  </button>
+                </Tip>
                 {items.length > 0 && <span className="chip">{items.length}</span>}
                 <span className="grow" />
-                <button
-                  type="button" className="wk__add"
-                  onClick={() => onAddOnDay(key)}
-                  title={`Add something to ${fmtDate(epoch, zone, 'medium')}`}
-                  aria-label={`Add something to ${fmtDate(epoch, zone, 'long')}`}
+                <Tip
+                  label={`Add to ${fmtDate(epoch, zone, 'medium')}`}
+                  hint="A new block on this day at ten in the morning. Drag it onto another day later if you change your mind."
                 >
-                  <IconPlus size={13} />
-                </button>
+                  <button
+                    type="button" className="wk__add"
+                    onClick={() => onAddOnDay(key)}
+                    aria-label={`Add something to ${fmtDate(epoch, zone, 'long')}`}
+                  >
+                    <IconPlus size={13} />
+                  </button>
+                </Tip>
               </div>
 
               <ul className="wk__list">
@@ -159,12 +168,11 @@ export function WeekView({
               </ul>
 
               {hidden > 0 && (
-                <button
-                  type="button" className="wk__more" onClick={() => onOpenDay(key)}
-                  title="This day has more than fits here — open it hour by hour"
-                >
-                  {hidden} more →
-                </button>
+                <Tip label={`${hidden} more on this day`} hint="More than fits in a cell this size. Opens the day hour by hour.">
+                  <button type="button" className="wk__more" onClick={() => onOpenDay(key)}>
+                    {hidden} more →
+                  </button>
+                </Tip>
               )}
 
               {items.length === 0 && (
