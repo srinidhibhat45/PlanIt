@@ -31,7 +31,15 @@ export function bookendsFor(personId: ID, trip: Trip): { arrival?: Segment; depa
   const flights = segmentsFor(personId, trip).filter((s) => s.kind === 'flight');
   const inbound = flights.find((f) => f.toPlaceId && placeKind(f.toPlaceId, trip) === 'airport' && isInbound(f, trip));
   const outbound = [...flights].reverse().find((f) => !isInbound(f, trip));
-  return { arrival: inbound ?? flights[0], departure: outbound ?? flights[flights.length - 1] };
+  const arrival = inbound ?? flights[0];
+  // The fallback exists because a domestic return — Bengaluru to Delhi — lands
+  // back inside the base zone and so does not read as outbound. It must not
+  // fire for someone who has only booked their way in: the last flight only
+  // counts as the way home if it leaves from where they landed. Otherwise a
+  // half-entered booking turns every later segment into "has already left".
+  const last = flights[flights.length - 1];
+  const fallback = last && arrival && last.fromPlaceId === arrival.toPlaceId ? last : undefined;
+  return { arrival, departure: outbound ?? fallback };
 }
 
 function isInbound(f: Segment, trip: Trip): boolean {

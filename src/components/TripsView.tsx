@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ID, Trip, Zone } from '../core/types';
 import { blankTrip, defaultDates, tripLengthDays, type TripMeta } from '../core/library';
+import { SEEDS } from '../data/seeds';
 import { dateKeyToEpoch, deviceZone, fmtDate } from '../core/time';
 import { isValidZone } from '../core/geo';
 import { IconCopy, IconPlus, IconSparkle, IconTrash, IconUpload } from './Icons';
@@ -19,14 +20,14 @@ const COMMON_ZONES: Zone[] = [
 ];
 
 export function TripsView({
-  trips, onOpen, onCreate, onDuplicate, onDelete, onLoadExample, onImport,
+  trips, onOpen, onCreate, onDuplicate, onDelete, onLoadSeed, onImport,
 }: {
   trips: TripMeta[];
   onOpen: (id: ID) => void;
   onCreate: (trip: Trip) => void;
   onDuplicate: (id: ID) => void;
   onDelete: (id: ID) => void;
-  onLoadExample: () => void;
+  onLoadSeed: (seedId: string) => void;
   onImport: (file: File) => void;
 }) {
   const [creating, setCreating] = useState(false);
@@ -79,11 +80,13 @@ export function TripsView({
               <button className="btn btn--primary btn--lg" onClick={() => setCreating(true)}>
                 <IconPlus size={16} /> Start a trip
               </button>
-              <Tip label="Open the example" hint="A fully worked eight-person conference trip — people, flights, clashes and all — to look around in.">
-                <button className="btn btn--lg" onClick={onLoadExample}>
-                  <IconSparkle size={16} /> Open the example
-                </button>
-              </Tip>
+              {SEEDS.map((seed) => (
+                <Tip key={seed.id} label={`Open ${seed.label}`} hint={seed.hint}>
+                  <button className="btn btn--lg" onClick={() => onLoadSeed(seed.id)}>
+                    <IconSparkle size={16} /> Open {seed.label}
+                  </button>
+                </Tip>
+              ))}
             </div>
           </div>
         )}
@@ -94,11 +97,15 @@ export function TripsView({
               <h2 className="library__heading">
                 {trips.length} {trips.length === 1 ? 'trip' : 'trips'}
               </h2>
-              <Tip label="Add the example trip" hint="A fully worked eight-person conference trip, added alongside your own. Delete it whenever you like." side="left">
-                <button className="btn btn--sm btn--ghost" onClick={onLoadExample}>
-                  <IconSparkle size={14} /> Add the example trip
-                </button>
-              </Tip>
+              <div className="row" style={{ gap: 'var(--s-2)' }}>
+                {SEEDS.map((seed) => (
+                  <Tip key={seed.id} label={`Add ${seed.label}`} hint={`${seed.hint} Added alongside your own trips — delete it whenever you like.`} side="left">
+                    <button className="btn btn--sm btn--ghost" onClick={() => onLoadSeed(seed.id)}>
+                      <IconSparkle size={14} /> Add {seed.label}
+                    </button>
+                  </Tip>
+                ))}
+              </div>
             </div>
             <ul className="library__grid">
               {trips.map((t) => (

@@ -12,7 +12,7 @@ import {
   activeTripId, deleteTrip, duplicateTrip, importLegacyTrip, listTrips, migrate,
   readTrip, reidentify, setActiveTrip, storageWorks, writeTrip, type TripMeta,
 } from './core/library';
-import { conferenceTrip } from './data/conference';
+import { seedById } from './data/seeds';
 import { TripsView } from './components/TripsView';
 import App from './App';
 
@@ -89,10 +89,12 @@ export default function Root() {
     openTrip(trip.id);
   }, [refresh, openTrip]);
 
-  const loadExample = useCallback(() => {
-    // A fresh identity every time, so opening the example twice gives two
+  const loadSeed = useCallback((seedId: string) => {
+    const seed = seedById(seedId);
+    if (!seed) return;
+    // A fresh identity every time, so opening a seed twice gives two
     // independent trips rather than one that overwrites the other.
-    const trip = reidentify(conferenceTrip());
+    const trip = reidentify(seed.build());
     writeTrip(trip);
     refresh();
     openTrip(trip.id);
@@ -159,7 +161,7 @@ export default function Root() {
         onCreate={create}
         onDuplicate={(id) => { const copy = duplicateTrip(id); refresh(); if (copy) openTrip(copy.id); }}
         onDelete={(id) => { deleteTrip(id); refresh(); }}
-        onLoadExample={loadExample}
+        onLoadSeed={loadSeed}
         onImport={importFile}
       />
       {notice && (
